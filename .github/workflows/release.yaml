@@ -1,0 +1,242 @@
+---
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  Release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.semrel.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+
+      - name: Install go dependencies
+        run: go mod download
+
+      - name: Building Release
+        uses: go-semantic-release/action@v1
+        id: semrel
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          hooks: goreleaser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sign-macos:
+    needs: Release
+    if: needs.Release.outputs.version != ''
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ secrets.VAULT_ADDR }}
+          method: jwt
+          path: github-actions
+          role: ${{ vars.VAULT_ROLE }}
+          jwtGithubAudience: ${{ secrets.JWT_GITHUB_AUDIENCE }}
+          secrets: |
+            ${{ vars.VAULT_SECRET_PATH }} MACOS_CERTIFICATE | MACOS_CERTIFICATE ;
+            ${{ vars.VAULT_SECRET_PATH }} MACOS_CERTIFICATE_PWD | MACOS_CERTIFICATE_PWD ;
+            ${{ vars.VAULT_SECRET_PATH }} KEYCHAIN_PASSWORD | KEYCHAIN_PASSWORD ;
+            ${{ vars.VAULT_SECRET_PATH }} CERT_IDENTITY | CERT_IDENTITY ;
+            ${{ vars.VAULT_SECRET_PATH }} APPLE_ID | APPLE_ID ;
+            ${{ vars.VAULT_SECRET_PATH }} TEAM_ID | TEAM_ID ;
+            ${{ vars.VAULT_SECRET_PATH }} PORTCLI_PASSWORD | APP_PASSWORD
+
+      - name: Get release tag
+        id: tag
+        run: echo "tag=v${{ needs.Release.outputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Darwin binaries from release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "portcli_*_darwin_*" \
+            --dir artifacts
+
+      - name: Sign and notarize Darwin binaries
+        env:
+          ARTIFACTS_DIR: artifacts
+        run: scripts/sign_macos.sh
+
+      - name: Re-upload signed Darwin binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            artifacts/portcli_*_darwin_*
+
+      - name: Update checksums for signed Darwin binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "portcli_*_checksums.txt" \
+            --dir artifacts \
+            --clobber
+          checksums=$(ls artifacts/portcli_*_checksums.txt)
+          for binary in artifacts/portcli_*_darwin_*; do
+            name=$(basename "$binary")
+            new_hash=$(shasum -a 256 "$binary" | awk '{print $1}')
+            awk -v n="$name" -v h="$new_hash" '
+              $2 == n { print h "  " n; next }
+              { print }
+            ' "$checksums" > "$checksums.new"
+            mv "$checksums.new" "$checksums"
+          done
+          cat "$checksums"
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "$checksums"
+
+  update-tap:
+    needs: [Release, sign-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed Darwin binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.Release.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh release download "$TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern "portcli_*_darwin_*" \
+            --dir artifacts
+
+      - name: Create tar.gz archives for Homebrew
+        env:
+          VERSION: ${{ needs.Release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for binary in artifacts/portcli_*_darwin_*; do
+            name=$(basename "$binary")
+            tarball="artifacts/${name}.tar.gz"
+            cp "$binary" artifacts/portcli
+            chmod +x artifacts/portcli
+            tar -czf "$tarball" -C artifacts portcli
+            rm artifacts/portcli
+          done
+
+      - name: Publish tarballs to gh-pages branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.Release.outputs.version }}
+        run: |
+          set -euo pipefail
+          pages=$(mktemp -d)
+          git clone --branch gh-pages "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$pages" 2>/dev/null || {
+            git init "$pages"
+            cd "$pages"
+            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+            git checkout --orphan gh-pages
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            echo "# portcli releases" > README.md
+            git add README.md
+            git commit -m "init gh-pages"
+            cd -
+          }
+          mkdir -p "$pages/releases"
+          cp artifacts/portcli_*_darwin_*.tar.gz "$pages/releases/"
+          cd "$pages"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add releases/
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+          else
+            git commit -m "release portcli ${VERSION}"
+            git push origin gh-pages
+          fi
+
+      - name: Get tap repo token
+        id: tap_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-portcli
+
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ steps.tap_token.outputs.token }}
+          VERSION: ${{ needs.Release.outputs.version }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euxo pipefail
+          amd64_sha=$(sha256sum "artifacts/portcli_${VERSION}_darwin_amd64.tar.gz" | awk '{print $1}')
+          arm64_sha=$(sha256sum "artifacts/portcli_${VERSION}_darwin_arm64.tar.gz" | awk '{print $1}')
+
+          tap=$(mktemp -d)
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository_owner }}/homebrew-portcli.git" "$tap"
+          mkdir -p "$tap/Formula"
+          cat > "$tap/Formula/portcli.rb" <<FORMULA
+          class Portcli < Formula
+            desc "CLI tool for Port.io self-service actions"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://${{ github.repository_owner }}.github.io/portcli/releases/portcli_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${arm64_sha}"
+              end
+              on_intel do
+                url "https://${{ github.repository_owner }}.github.io/portcli/releases/portcli_${VERSION}_darwin_amd64.tar.gz"
+                sha256 "${amd64_sha}"
+              end
+            end
+
+            def install
+              bin.install "portcli"
+            end
+
+            test do
+              system "#{bin}/portcli", "--version"
+            end
+          end
+          FORMULA
+
+          cd "$tap"
+          git config user.name "portcli-tap-publisher[bot]"
+          git config user.email "portcli-tap-publisher[bot]@users.noreply.github.com"
+          git checkout -B main
+          git add Formula/portcli.rb
+          if git diff --cached --quiet HEAD -- 2>/dev/null; then
+            echo "No formula changes"
+          else
+            git commit -m "portcli ${VERSION}"
+            git push -u origin main
+          fi
