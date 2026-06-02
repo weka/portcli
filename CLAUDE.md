@@ -58,7 +58,7 @@ portcli/
 |---------|------|-------------|
 | `blueprint list` | | List blueprints. Flags: `--filter` (regex) |
 | `blueprint get` | `<identifier>` | Show blueprint schema fields (name, title, type) |
-| `entity get` | `<blueprint> [entity-id]` | Fetch entity, or list all entities if no ID given. Flags: `--property`/`-p` (print single property value), `--filter`/`-f` (filter by field=value) |
+| `entity get` | `<blueprint> [entity-id]` | Fetch entity (full JSON), or list entities as table (identifier, status, owner, created, TTL) if no ID given. Flags: `--property`/`-p` (print single property value), `--filter`/`-f` (filter by field=value) |
 | `entity update` | `<blueprint> [entity-id]` | Update entity field. Flags: `--field`, `--value`, `--all` |
 | `entity delete` | `<blueprint> [entity-id]` | Delete entity. Flags: `--all`, `--yes`/`-y`, `--filter`/`-f` (with --all, filter by field=value) |
 | `action run` | `<action-identifier>` | Execute action. Flags: `--input`, `--wait`, `--poll`, `--timeout`, `--run-as`, `--entity`, `--id` |

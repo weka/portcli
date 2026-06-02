@@ -3,7 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
@@ -58,25 +60,35 @@ func getEntity(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(args) == 1 {
+		var entities []client.EntitySummary
 		if getFilter != "" {
 			field, value, err := parseFilter(getFilter)
 			if err != nil {
 				return err
 			}
-			entities, err := c.SearchEntitiesWithFilter(blueprint, field, value)
+			entities, err = c.SearchEntitiesWithFilter(blueprint, field, value)
 			if err != nil {
 				return fmt.Errorf("failed to search entities: %w", err)
 			}
-			out, _ := json.MarshalIndent(entities, "", "  ")
-			fmt.Println(string(out))
-			return nil
+		} else {
+			var err error
+			entities, err = c.SearchEntities(blueprint)
+			if err != nil {
+				return fmt.Errorf("failed to list entities: %w", err)
+			}
 		}
-		entities, err := c.SearchEntities(blueprint)
-		if err != nil {
-			return fmt.Errorf("failed to list entities: %w", err)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "IDENTIFIER\tSTATUS\tOWNER\tCREATED\tTTL")
+		for _, e := range entities {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				e.Identifier,
+				propStr(e.Properties, "status"),
+				propStr(e.Properties, "owner"),
+				shortDate(e.CreatedAt),
+				propStr(e.Properties, "ttl"),
+			)
 		}
-		out, _ := json.MarshalIndent(entities, "", "  ")
-		fmt.Println(string(out))
+		w.Flush()
 		return nil
 	}
 
@@ -104,4 +116,28 @@ func getEntity(cmd *cobra.Command, args []string) error {
 	out, _ := json.MarshalIndent(entity.Entity, "", "  ")
 	fmt.Println(string(out))
 	return nil
+}
+
+// propStr extracts a string property from an entity's properties map.
+func propStr(props map[string]any, key string) string {
+	if props == nil {
+		return ""
+	}
+	v, ok := props[key]
+	if !ok || v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	out, _ := json.Marshal(v)
+	return string(out)
+}
+
+// shortDate trims a timestamp to just the date portion (YYYY-MM-DD).
+func shortDate(ts string) string {
+	if len(ts) >= 10 {
+		return ts[:10]
+	}
+	return ts
 }

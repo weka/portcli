@@ -224,10 +224,13 @@ type Entity struct {
 	} `json:"entity"`
 }
 
-// EntitySummary is a minimal representation of an entity used for listing.
+// EntitySummary is a representation of an entity used for listing.
 type EntitySummary struct {
-	Identifier string `json:"identifier"`
-	Title      string `json:"title"`
+	Identifier string         `json:"identifier"`
+	Title      string         `json:"title"`
+	Properties map[string]any `json:"properties"`
+	CreatedAt  string         `json:"createdAt"`
+	CreatedBy  string         `json:"createdBy"`
 }
 
 // SearchEntities lists all entities for a given blueprint.
