@@ -3,46 +3,55 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
 )
 
 var (
 	updateAll  bool
-	fieldName  string
-	fieldValue string
+	updateJSON string
 )
 
 var entityUpdateCmd = &cobra.Command{
-	Use:   "update <blueprint> [entity-identifier]",
-	Short: "Update a field on an entity or all entities of a blueprint",
-	Long: `Update a single property on a Port catalog entity.
+	Use:   "update <blueprint> [entity-identifier] [key=value ...]",
+	Short: "Update properties on an entity or all entities of a blueprint",
+	Long: `Update properties on a Port catalog entity.
 
-Use --all to update the field on every entity of the blueprint.
+Properties can be specified as key=value positional arguments, via --json, or both.
+When both are used, --json values take precedence on conflicts.
+
+Use --all to update the properties on every entity of the blueprint.
 
 Examples:
-  portcli entity update myBlueprint my-entity --field status --value active
-  portcli entity update myBlueprint --all --field status --value active`,
+  portcli entity update myBlueprint my-entity status=active
+  portcli entity update myBlueprint my-entity ttl="2026-06-01T09:13:26" status=active
+  portcli entity update myBlueprint my-entity --json '{"status": "active", "metadata": {"nested": true}}'
+  portcli entity update myBlueprint --all status=active`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		all, _ := cmd.Flags().GetBool("all")
 		if all {
-			return cobra.ExactArgs(1)(cmd, args)
+			if len(args) < 1 {
+				return fmt.Errorf("requires at least 1 arg (blueprint) when using --all")
+			}
+		} else {
+			if len(args) < 2 {
+				return fmt.Errorf("requires at least 2 args (blueprint and entity-identifier)")
+			}
 		}
-		return cobra.ExactArgs(2)(cmd, args)
+		return nil
 	},
 	RunE: updateEntity,
 }
 
 func init() {
 	entityUpdateCmd.Flags().BoolVar(&updateAll, "all", false, "Update all entities of the blueprint")
-	entityUpdateCmd.Flags().StringVar(&fieldName, "field", "", "Property name to update")
-	entityUpdateCmd.Flags().StringVar(&fieldValue, "value", "", "New value (JSON-parsed if possible, otherwise string)")
-	entityUpdateCmd.MarkFlagRequired("field")
-	entityUpdateCmd.MarkFlagRequired("value")
+	entityUpdateCmd.Flags().StringVar(&updateJSON, "json", "", "JSON object of properties to update")
 }
 
 func parseValue(raw string) any {
@@ -55,7 +64,39 @@ func parseValue(raw string) any {
 
 func updateEntity(cmd *cobra.Command, args []string) error {
 	blueprint := args[0]
-	value := parseValue(fieldValue)
+
+	// Determine where key=value args start
+	kvStart := 2
+	if updateAll {
+		kvStart = 1
+	}
+
+	// Parse key=value pairs from remaining args
+	props := make(map[string]any)
+	for _, arg := range args[kvStart:] {
+		idx := strings.IndexByte(arg, '=')
+		if idx <= 0 {
+			return fmt.Errorf("invalid argument %q: expected key=value format", arg)
+		}
+		key := arg[:idx]
+		val := arg[idx+1:]
+		props[key] = parseValue(val)
+	}
+
+	// Parse --json flag and overlay on top (takes precedence)
+	if updateJSON != "" {
+		var jsonProps map[string]any
+		if err := json.Unmarshal([]byte(updateJSON), &jsonProps); err != nil {
+			return fmt.Errorf("invalid --json value: %w", err)
+		}
+		for k, v := range jsonProps {
+			props[k] = v
+		}
+	}
+
+	if len(props) == 0 {
+		return fmt.Errorf("no properties provided; use key=value arguments or --json flag")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -64,18 +105,27 @@ func updateEntity(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	if updateAll {
-		return updateAllEntities(c, blueprint, fieldName, value)
+		return updateAllEntities(c, blueprint, props)
 	}
 
 	identifier := args[1]
-	if err := c.UpdateEntityProperty(blueprint, identifier, fieldName, value); err != nil {
+	if err := c.UpdateEntityProperties(blueprint, identifier, props); err != nil {
 		return fmt.Errorf("failed to update entity %s: %w", identifier, err)
 	}
-	fmt.Printf("Updated %s.%s on entity %s\n", blueprint, fieldName, identifier)
+	fmt.Printf("Updated %s on entity %s\n", propNames(props), identifier)
 	return nil
 }
 
-func updateAllEntities(c *client.Client, blueprint, field string, value any) error {
+func propNames(props map[string]any) string {
+	names := make([]string, 0, len(props))
+	for k := range props {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func updateAllEntities(c *client.Client, blueprint string, props map[string]any) error {
 	entities, err := c.SearchEntities(blueprint)
 	if err != nil {
 		return fmt.Errorf("failed to list entities: %w", err)
@@ -86,7 +136,7 @@ func updateAllEntities(c *client.Client, blueprint, field string, value any) err
 		return nil
 	}
 
-	fmt.Printf("Updating %s on %d entities...\n", field, len(entities))
+	fmt.Printf("Updating %s on %d entities...\n", propNames(props), len(entities))
 
 	var (
 		failed atomic.Int32
@@ -102,7 +152,7 @@ func updateAllEntities(c *client.Client, blueprint, field string, value any) err
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := c.UpdateEntityProperty(blueprint, id, field, value); err != nil {
+			if err := c.UpdateEntityProperties(blueprint, id, props); err != nil {
 				mu.Lock()
 				fmt.Printf("  FAILED %s: %v\n", id, err)
 				mu.Unlock()

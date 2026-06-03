@@ -97,21 +97,29 @@ Options:
 - `--property`, `-p` — print only the value of a specific property
 - `--filter`, `-f` — filter entities by property value (format: field=value)
 
-#### Update an entity field
+#### Update entity properties
 
 ```bash
-portcli entity update <blueprint> <entity-identifier> --field status --value active
+portcli entity update <blueprint> <entity-identifier> status=active
+portcli entity update <blueprint> <entity-identifier> ttl="2026-06-01T09:13:26" status=active
 ```
+
+Use `--json` for complex or nested values:
+
+```bash
+portcli entity update <blueprint> <entity-identifier> --json '{"status": "active", "metadata": {"nested": true}}'
+```
+
+Both key=value args and `--json` can be combined (--json takes precedence on conflicts).
 
 Update all entities of a blueprint:
 
 ```bash
-portcli entity update <blueprint> --all --field status --value active
+portcli entity update <blueprint> --all status=active
 ```
 
 Options:
-- `--field` — property name to update (required)
-- `--value` — new value, JSON-parsed if possible (required)
+- `--json` — JSON object of properties to update
 - `--all` — update all entities of the blueprint (uses bounded concurrency)
 
 #### Delete an entity

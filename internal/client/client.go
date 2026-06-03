@@ -280,12 +280,10 @@ func (c *Client) SearchEntitiesWithFilter(blueprint, field, value string) ([]Ent
 	return result.Entities, nil
 }
 
-// UpdateEntityProperty updates a single property on an entity using PATCH.
-func (c *Client) UpdateEntityProperty(blueprint, identifier, field string, value any) error {
+// UpdateEntityProperties updates properties on an entity using PATCH.
+func (c *Client) UpdateEntityProperties(blueprint, identifier string, properties map[string]any) error {
 	body := map[string]any{
-		"properties": map[string]any{
-			field: value,
-		},
+		"properties": properties,
 	}
 	_, err := c.doRequest("PATCH", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities/"+url.PathEscape(identifier), body)
 	return err
