@@ -11,9 +11,10 @@ import (
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:     "portcli",
-	Short:   "CLI for Port.io self-service actions",
-	Version: Version,
+	Use:          "portcli",
+	Short:        "CLI for Port.io self-service actions",
+	Version:      Version,
+	SilenceUsage: true,
 }
 
 func init() {
