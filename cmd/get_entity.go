@@ -14,6 +14,7 @@ import (
 
 var getProperty string
 var getFilter string
+var getColumns string
 
 // parseFilter splits a "field=value" filter string into its parts.
 func parseFilter(filter string) (field, value string, err error) {
@@ -32,10 +33,11 @@ If no entity identifier is provided, lists all entities for the blueprint.
 
 Examples:
   portcli entity get myBlueprint
+  portcli entity get myBlueprint --columns status,owner,deploymentType
   portcli entity get myBlueprint my-entity-id
   portcli entity get myBlueprint my-entity-id --property version
   portcli entity get myBlueprint my-entity-id -p status
-  portcli entity get myBlueprint --filter "environment=production"`,
+  portcli entity get myBlueprint --filter "environment=production" --columns status`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: getEntity,
 }
@@ -43,6 +45,7 @@ Examples:
 func init() {
 	entityGetCmd.Flags().StringVarP(&getProperty, "property", "p", "", "Print only the value of a specific property")
 	entityGetCmd.Flags().StringVarP(&getFilter, "filter", "f", "", "Filter entities by property value (format: field=value)")
+	entityGetCmd.Flags().StringVarP(&getColumns, "columns", "c", "", "Comma-separated list of property columns to show (e.g. status,owner,deploymentType)")
 }
 
 func getEntity(cmd *cobra.Command, args []string) error {
@@ -57,6 +60,9 @@ func getEntity(cmd *cobra.Command, args []string) error {
 
 	if getFilter != "" && len(args) == 2 {
 		return fmt.Errorf("--filter cannot be used with a specific entity identifier")
+	}
+	if getColumns != "" && len(args) == 2 {
+		return fmt.Errorf("--columns cannot be used with a specific entity identifier")
 	}
 
 	if len(args) == 1 {
@@ -77,16 +83,39 @@ func getEntity(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("failed to list entities: %w", err)
 			}
 		}
+		var columns []string
+		if getColumns != "" {
+			for _, col := range strings.Split(getColumns, ",") {
+				col = strings.TrimSpace(col)
+				if col != "" {
+					columns = append(columns, col)
+				}
+			}
+		}
+		// Always include createdAt column
+		hasCreatedAt := false
+		for _, col := range columns {
+			if strings.ToLower(col) == "createdat" {
+				hasCreatedAt = true
+				break
+			}
+		}
+		if !hasCreatedAt {
+			columns = append(columns, "createdAt")
+		}
+
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "IDENTIFIER\tSTATUS\tOWNER\tCREATED\tTTL")
+		header := "IDENTIFIER"
+		for _, col := range columns {
+			header += "\t" + strings.ToUpper(camelToSnake(col))
+		}
+		fmt.Fprintln(w, header)
 		for _, e := range entities {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				e.Identifier,
-				propStr(e.Properties, "status"),
-				propStr(e.Properties, "owner"),
-				shortDate(e.CreatedAt),
-				propStr(e.Properties, "ttl"),
-			)
+			row := e.Identifier
+			for _, col := range columns {
+				row += "\t" + entityColStr(e, col)
+			}
+			fmt.Fprintln(w, row)
 		}
 		w.Flush()
 		return nil
@@ -118,6 +147,38 @@ func getEntity(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// camelToSnake converts camelCase to SNAKE_CASE-friendly form by inserting underscores.
+func camelToSnake(s string) string {
+	var result []byte
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result = append(result, '_')
+		}
+		result = append(result, byte(r))
+	}
+	return string(result)
+}
+
+// entityColStr returns a column value from an entity, checking meta fields first.
+func entityColStr(e client.EntitySummary, col string) string {
+	switch strings.ToLower(col) {
+	case "createdat":
+		return formatDate(e.CreatedAt)
+	case "createdby":
+		return e.CreatedBy
+	default:
+		return propStr(e.Properties, col)
+	}
+}
+
+// formatDate trims an ISO timestamp to just the date portion.
+func formatDate(s string) string {
+	if t := strings.Index(s, "T"); t > 0 {
+		return s[:t]
+	}
+	return s
+}
+
 // propStr extracts a string property from an entity's properties map.
 func propStr(props map[string]any, key string) string {
 	if props == nil {
@@ -134,10 +195,3 @@ func propStr(props map[string]any, key string) string {
 	return string(out)
 }
 
-// shortDate trims a timestamp to just the date portion (YYYY-MM-DD).
-func shortDate(ts string) string {
-	if len(ts) >= 10 {
-		return ts[:10]
-	}
-	return ts
-}

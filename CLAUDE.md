@@ -58,8 +58,8 @@ portcli/
 |---------|------|-------------|
 | `blueprint list` | | List blueprints. Flags: `--filter` (regex) |
 | `blueprint get` | `<identifier>` | Show blueprint schema fields (name, title, type) |
-| `entity get` | `<blueprint> [entity-id]` | Fetch entity (full JSON), or list entities as table (identifier, status, owner, created, TTL) if no ID given. Flags: `--property`/`-p` (print single property value), `--filter`/`-f` (filter by field=value) |
-| `entity update` | `<blueprint> [entity-id] [key=value ...]` | Update entity properties. Flags: `--json` (JSON object), `--all` |
+| `entity get` | `<blueprint> [entity-id]` | Fetch entity (full JSON), or list entities as table if no ID given. Flags: `--property`/`-p` (print single property value), `--filter`/`-f` (filter by field=value), `--columns`/`-c` (comma-separated property columns to show, default: identifier only) |
+| `entity update` | `<blueprint> [entity-id] [key=value ...]` | Update entity properties. Flags: `--json` (JSON object), `--all`, `--filter`/`-f` (filter by field=value, implies --all) |
 | `entity delete` | `<blueprint> [entity-id]` | Delete entity. Flags: `--all`, `--yes`/`-y`, `--filter`/`-f` (with --all, filter by field=value) |
 | `action run` | `<action-identifier>` | Execute action. Flags: `--input`, `--wait`, `--poll`, `--timeout`, `--run-as`, `--entity`, `--id` |
 | `action status` | `<run-id>` | Get action run status |

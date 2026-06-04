@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	updateAll  bool
-	updateJSON string
+	updateAll    bool
+	updateJSON   string
+	updateFilter string
 )
 
 var entityUpdateCmd = &cobra.Command{
@@ -27,17 +28,20 @@ Properties can be specified as key=value positional arguments, via --json, or bo
 When both are used, --json values take precedence on conflicts.
 
 Use --all to update the properties on every entity of the blueprint.
+Use --filter to update only matching entities (implies --all).
 
 Examples:
   portcli entity update myBlueprint my-entity status=active
   portcli entity update myBlueprint my-entity ttl="2026-06-01T09:13:26" status=active
   portcli entity update myBlueprint my-entity --json '{"status": "active", "metadata": {"nested": true}}'
-  portcli entity update myBlueprint --all status=active`,
+  portcli entity update myBlueprint --all status=active
+  portcli entity update myBlueprint --filter status=Failed ttl="2026-06-01T09:13:26"`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		all, _ := cmd.Flags().GetBool("all")
-		if all {
+		filter, _ := cmd.Flags().GetString("filter")
+		if all || filter != "" {
 			if len(args) < 1 {
-				return fmt.Errorf("requires at least 1 arg (blueprint) when using --all")
+				return fmt.Errorf("requires at least 1 arg (blueprint) when using --all or --filter")
 			}
 		} else {
 			if len(args) < 2 {
@@ -52,6 +56,7 @@ Examples:
 func init() {
 	entityUpdateCmd.Flags().BoolVar(&updateAll, "all", false, "Update all entities of the blueprint")
 	entityUpdateCmd.Flags().StringVar(&updateJSON, "json", "", "JSON object of properties to update")
+	entityUpdateCmd.Flags().StringVarP(&updateFilter, "filter", "f", "", "Filter entities by property value (format: field=value), implies --all")
 }
 
 func parseValue(raw string) any {
@@ -65,9 +70,11 @@ func parseValue(raw string) any {
 func updateEntity(cmd *cobra.Command, args []string) error {
 	blueprint := args[0]
 
+	bulkMode := updateAll || updateFilter != ""
+
 	// Determine where key=value args start
 	kvStart := 2
-	if updateAll {
+	if bulkMode {
 		kvStart = 1
 	}
 
@@ -104,8 +111,8 @@ func updateEntity(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	if updateAll {
-		return updateAllEntities(c, blueprint, props)
+	if bulkMode {
+		return updateAllEntities(c, blueprint, props, updateFilter)
 	}
 
 	identifier := args[1]
@@ -125,8 +132,19 @@ func propNames(props map[string]any) string {
 	return strings.Join(names, ", ")
 }
 
-func updateAllEntities(c *client.Client, blueprint string, props map[string]any) error {
-	entities, err := c.SearchEntities(blueprint)
+func updateAllEntities(c *client.Client, blueprint string, props map[string]any, filter string) error {
+	var entities []client.EntitySummary
+	var err error
+
+	if filter != "" {
+		field, value, ferr := parseFilter(filter)
+		if ferr != nil {
+			return ferr
+		}
+		entities, err = c.SearchEntitiesWithFilter(blueprint, field, value)
+	} else {
+		entities, err = c.SearchEntities(blueprint)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to list entities: %w", err)
 	}
@@ -136,7 +154,11 @@ func updateAllEntities(c *client.Client, blueprint string, props map[string]any)
 		return nil
 	}
 
-	fmt.Printf("Updating %s on %d entities...\n", propNames(props), len(entities))
+	filterDesc := ""
+	if filter != "" {
+		filterDesc = fmt.Sprintf(" matching filter %q", filter)
+	}
+	fmt.Printf("Updating %s on %d entities%s...\n", propNames(props), len(entities), filterDesc)
 
 	var (
 		failed atomic.Int32
