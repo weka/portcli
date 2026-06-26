@@ -375,3 +375,43 @@ func (c *Client) WaitForRun(runID string, pollInterval, timeout time.Duration) (
 	}
 	return nil, fmt.Errorf("timed out waiting for run %s after %s", runID, timeout)
 }
+
+// ActionInput describes a single user input of a self-service action.
+type ActionInput struct {
+	Type        string `json:"type"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Default     any    `json:"default"`
+	Enum        []any  `json:"enum"`
+}
+
+// ActionDetail represents a Port self-service action and its input schema.
+type ActionDetail struct {
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	Trigger    struct {
+		BlueprintIdentifier string `json:"blueprintIdentifier"`
+		Operation           string `json:"operation"`
+		UserInputs          struct {
+			Properties map[string]ActionInput `json:"properties"`
+			Required   []string               `json:"required"`
+			Order      []string               `json:"order"`
+		} `json:"userInputs"`
+	} `json:"trigger"`
+}
+
+// GetAction fetches a self-service action and its input schema by identifier.
+func (c *Client) GetAction(identifier string) (*ActionDetail, error) {
+	data, err := c.doRequest("GET", "/v1/actions/"+url.PathEscape(identifier), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Action ActionDetail `json:"action"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse action response: %w", err)
+	}
+	return &result.Action, nil
+}

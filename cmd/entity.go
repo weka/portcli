@@ -11,4 +11,5 @@ func init() {
 	entityCmd.AddCommand(entityGetCmd)
 	entityCmd.AddCommand(entityUpdateCmd)
 	entityCmd.AddCommand(entityDeleteCmd)
+	entityCmd.AddCommand(entityWaitCmd)
 }

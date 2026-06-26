@@ -20,6 +20,7 @@ var (
 	runAs        string
 	entityID     string
 	identifier string
+	runJSON      bool
 )
 
 var actionRunCmd = &cobra.Command{
@@ -43,6 +44,7 @@ func init() {
 	actionRunCmd.Flags().StringVar(&runAs, "run-as", "", "Execute the action on behalf of this user email")
 	actionRunCmd.Flags().StringVar(&entityID, "entity", "", "Target entity identifier (for day-2 actions on existing entities)")
 	actionRunCmd.Flags().StringVar(&identifier, "id", "", "Custom identifier for the created entity")
+	actionRunCmd.Flags().BoolVar(&runJSON, "json", false, "Emit a single machine-readable JSON object (run_id, status, identifier, linked_entities) instead of the full run dump")
 }
 
 func runAction(cmd *cobra.Command, args []string) error {
@@ -82,11 +84,36 @@ func runAction(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Run completed: %s\n", result.Run.Status)
 	}
 
-	out, _ := json.MarshalIndent(result.Run, "", "  ")
-	fmt.Println(string(out))
+	if runJSON {
+		emitRunJSON(result)
+	} else {
+		out, _ := json.MarshalIndent(result.Run, "", "  ")
+		fmt.Println(string(out))
+		printLinkedEntities(c, result)
+	}
 
-	printLinkedEntities(c, result)
+	// With --wait we know the terminal status, so reflect a failed run in the exit
+	// code instead of exiting 0 regardless. Without --wait the run is still
+	// IN_PROGRESS and there is nothing to fail on yet.
+	if wait && result.Run.Status == "FAILURE" {
+		return fmt.Errorf("run %s finished with status FAILURE", runID)
+	}
 	return nil
+}
+
+// emitRunJSON prints a single, stable JSON object describing the run — enough to
+// script against (run id, status, the entity identifier we set, linked entities)
+// without scraping stderr or parsing multiple stdout blobs.
+func emitRunJSON(result *client.ActionRun) {
+	id, _ := result.Run.Properties["identifier"].(string)
+	out, _ := json.MarshalIndent(map[string]any{
+		"run_id":          result.Run.ID,
+		"status":          result.Run.Status,
+		"identifier":      id,
+		"blueprint":       result.Run.Blueprint.Identifier,
+		"linked_entities": result.GetLinkedEntities(),
+	}, "", "  ")
+	fmt.Println(string(out))
 }
 
 func printLinkedEntities(c *client.Client, result *client.ActionRun) {
