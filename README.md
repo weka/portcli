@@ -180,3 +180,21 @@ portcli action status <run-id>
 ```bash
 portcli action logs <run-id>
 ```
+
+#### List action runs
+
+```bash
+portcli action list
+portcli action list --entity <entity-id> --blueprint <blueprint-id>
+portcli action list --entity <entity-id> --blueprint <blueprint-id> --action destroy --limit 10
+portcli action list --entity <entity-id> --blueprint <blueprint-id> --status FAILURE
+portcli action list --entity <entity-id> --blueprint <blueprint-id> --action destroy --json
+```
+
+Options:
+- `--entity`/`-e` — filter by entity identifier
+- `--blueprint`/`-b` — blueprint identifier of the entity
+- `--action`/`-a` — filter by action identifier (client-side)
+- `--status`/`-s` — filter by run status: IN_PROGRESS, SUCCESS, FAILURE (client-side, case-insensitive)
+- `--limit`/`-l` — max runs to fetch from API (default: 20)
+- `--json` — emit machine-readable JSON array

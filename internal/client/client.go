@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/weka/portcli/internal/config"
@@ -93,6 +94,52 @@ func (c *Client) doRequest(method, path string, body any) ([]byte, error) {
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, respBody)
 	}
 	return respBody, nil
+}
+
+// RunSummary represents a single run entry returned by the list runs endpoint.
+type RunSummary struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
+	EndedAt   *string `json:"endedAt"`
+	Action    struct {
+		Identifier string `json:"identifier"`
+		Title      string `json:"title"`
+	} `json:"action"`
+	Blueprint struct {
+		Identifier string `json:"identifier"`
+	} `json:"blueprint"`
+}
+
+// ListActionRuns fetches action runs, optionally filtered by entity, blueprint, and limit.
+func (c *Client) ListActionRuns(entity, blueprint string, limit int) ([]RunSummary, error) {
+	params := url.Values{}
+	if entity != "" {
+		params.Set("entity", entity)
+	}
+	if blueprint != "" {
+		params.Set("blueprint", blueprint)
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/actions/runs"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	data, err := c.doRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Runs []RunSummary `json:"runs"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse runs response: %w", err)
+	}
+	return result.Runs, nil
 }
 
 // ActionRun represents the result of triggering an action.

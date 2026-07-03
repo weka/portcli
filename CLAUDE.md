@@ -40,7 +40,8 @@ portcli/
 │   ├── action.go                  # `action` parent command
 │   ├── run.go                     # `action run <action-id>` — execute action, optional wait/poll
 │   ├── status.go                  # `action status <run-id>` — get action run status
-│   └── logs.go                    # `action logs <run-id>` — get action run logs
+│   ├── logs.go                    # `action logs <run-id>` — get action run logs
+│   └── list_runs.go               # `action list` — list action runs with filters
 ├── scripts/
 │   └── sign_macos.sh              # macOS codesign + notarize (runs in CI)
 └── internal/
@@ -64,6 +65,7 @@ portcli/
 | `action run` | `<action-identifier>` | Execute action. Flags: `--input`, `--wait`, `--poll`, `--timeout`, `--run-as`, `--entity`, `--id` |
 | `action status` | `<run-id>` | Get action run status |
 | `action logs` | `<run-id>` | Get action run logs |
+| `action list` | | List action runs as table. Flags: `--entity`/`-e`, `--blueprint`/`-b`, `--action`/`-a` (client-side), `--status`/`-s` (client-side, case-insensitive), `--limit`/`-l` (default 20), `--json` |
 
 ## Configuration
 - Env vars: `PORT_CLIENT_ID`, `PORT_CLIENT_SECRET`, `PORT_BASE_URL`

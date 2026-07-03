@@ -12,4 +12,5 @@ func init() {
 	actionCmd.AddCommand(actionStatusCmd)
 	actionCmd.AddCommand(actionLogsCmd)
 	actionCmd.AddCommand(actionGetCmd)
+	actionCmd.AddCommand(actionListCmd)
 }
