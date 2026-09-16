@@ -93,9 +93,16 @@ portcli entity get <blueprint> --filter "environment=production"
 portcli entity get <blueprint> -f "status=active"
 ```
 
+The filter field may also be one of an entity's top-level fields — `identifier`,
+`title`, `blueprint`, `team`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`:
+
+```bash
+portcli entity get <blueprint> -f "identifier=my-entity"
+```
+
 Options:
 - `--property`, `-p` — print only the value of a specific property
-- `--filter`, `-f` — filter entities by property value (format: field=value)
+- `--filter`, `-f` — filter entities by property or top-level field (format: field=value)
 
 #### Update entity properties
 
@@ -151,7 +158,7 @@ portcli entity delete <blueprint> --all --filter "environment=staging" --yes
 Options:
 - `--all` — delete all entities of the blueprint (uses bounded concurrency)
 - `--yes`, `-y` — skip confirmation prompt
-- `--filter`, `-f` — filter entities by property value (format: field=value), requires `--all`
+- `--filter`, `-f` — filter entities by property or top-level field (format: field=value), requires `--all`
 
 ### Action commands
 
@@ -168,6 +175,27 @@ Options:
 - `--timeout` — timeout in seconds (default: 120)
 - `--run-as` — email to run as
 - `--id` — entity identifier
+
+##### Actions that create an entity
+
+Port runs a "Create/Update entity" (`UPSERT_ENTITY`) action itself rather than
+handing it to a backend, and keeps no run record for it: the run id it returns
+404s immediately, whether or not the entity was created, and never shows up in
+`action run status` or `action list`. `--wait` cannot help.
+
+For these actions `portcli` verifies the target entity exists instead, and fails
+if it does not — so a rejected upsert is reported rather than looking like a
+successful run. A required blueprint property that resolves to an empty value is
+the usual reason one is rejected, and the error names it:
+
+```
+action createOperatorTestExecution did not create entity operator_test_execution/my-run
+  required operator_test_execution properties that did not resolve:
+    owner — from input "owner", which resolved empty (pass --input owner=...)
+```
+
+An input whose default is a jqQuery over the calling user (e.g. `.user.email`)
+resolves to nothing under client-credential auth, so pass it explicitly.
 
 #### Check action run status
 

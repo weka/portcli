@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -67,31 +68,34 @@ func waitEntity(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	deadline := time.Now().Add(time.Duration(waitTimeout) * time.Second)
 	fmt.Fprintf(os.Stderr, ">> waiting for %s/%s %s to match /%s/ (timeout %ds, interval %ds)\n",
 		blueprint, identifier, waitProperty, waitFor, waitTimeout, waitInterval)
 
-	for {
-		val := ""
-		entity, err := c.GetEntity(blueprint, identifier)
-		if err != nil {
-			// Not found yet (or transient) — keep polling; the timeout bounds the wait.
-			fmt.Fprintf(os.Stderr, "   %s/%s not available yet (%v)\n", blueprint, identifier, err)
-		} else {
+	val := ""
+	_, err = c.PollEntity(blueprint, identifier,
+		time.Duration(waitTimeout)*time.Second, time.Duration(waitInterval)*time.Second,
+		func(entity *client.Entity, fetchErr error) (bool, error) {
+			val = ""
+			if fetchErr != nil {
+				// Not found yet (or transient) — keep polling; the timeout bounds the wait.
+				fmt.Fprintf(os.Stderr, "   %s/%s not available yet (%v)\n", blueprint, identifier, fetchErr)
+				return false, nil
+			}
 			val = propStr(entity.Entity.Properties, waitProperty)
 			fmt.Fprintf(os.Stderr, "   %s/%s %s=[%s]\n", blueprint, identifier, waitProperty, val)
 			if failRE != nil && failRE.MatchString(val) {
-				return fmt.Errorf("%s/%s %s=%q matched fail condition /%s/", blueprint, identifier, waitProperty, val, waitFailFor)
+				return false, fmt.Errorf("%s/%s %s=%q matched fail condition /%s/", blueprint, identifier, waitProperty, val, waitFailFor)
 			}
-			if successRE.MatchString(val) {
-				fmt.Fprintf(os.Stderr, "OK: %s/%s %s=%q\n", blueprint, identifier, waitProperty, val)
-				return nil
-			}
-		}
-		if time.Now().After(deadline) {
+			return successRE.MatchString(val), nil
+		})
+	if err != nil {
+		if errors.Is(err, client.ErrPollTimeout) {
 			return fmt.Errorf("timed out after %ds waiting for %s/%s %s to match /%s/ (last=%q)",
 				waitTimeout, blueprint, identifier, waitProperty, waitFor, val)
 		}
-		time.Sleep(time.Duration(waitInterval) * time.Second)
+		return err
 	}
+
+	fmt.Fprintf(os.Stderr, "OK: %s/%s %s=%q\n", blueprint, identifier, waitProperty, val)
+	return nil
 }

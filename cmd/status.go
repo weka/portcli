@@ -33,7 +33,7 @@ func getStatus(cmd *cobra.Command, args []string) error {
 
 	result, err := c.GetActionRun(runID)
 	if err != nil {
-		return fmt.Errorf("failed to get run: %w", err)
+		return explainMissingRun(fmt.Errorf("failed to get run: %w", err))
 	}
 
 	fmt.Fprintf(os.Stderr, "Run %s: %s\n", runID, result.Run.Status)

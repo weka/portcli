@@ -3,11 +3,13 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/weka/portcli/internal/config"
@@ -221,6 +223,7 @@ type BlueprintDetail struct {
 	Title      string `json:"title"`
 	Schema     struct {
 		Properties map[string]BlueprintProperty `json:"properties"`
+		Required   []string                     `json:"required"`
 	} `json:"schema"`
 }
 
@@ -271,6 +274,43 @@ type Entity struct {
 	} `json:"entity"`
 }
 
+// IsNotFound reports whether err is a 404 from the API. doRequest carries the
+// status in the formatted message, so the check lives beside the formatting
+// rather than leaving callers to match on the string themselves.
+func IsNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "(status 404)")
+}
+
+// ErrPollTimeout reports that PollEntity gave up waiting. Callers format the
+// user-facing message themselves, since only they know what they waited for.
+var ErrPollTimeout = errors.New("timed out polling entity")
+
+// PollEntity fetches an entity until check is satisfied or timeout expires.
+// A failed fetch is handed to check rather than ending the poll: callers are
+// usually waiting for an entity to appear, so "not found" is the expected
+// start state. Only check can stop early, by returning true or an error.
+func (c *Client) PollEntity(
+	blueprint, identifier string,
+	timeout, interval time.Duration,
+	check func(*Entity, error) (bool, error),
+) (*Entity, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		entity, fetchErr := c.GetEntity(blueprint, identifier)
+		done, err := check(entity, fetchErr)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return entity, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, ErrPollTimeout
+		}
+		time.Sleep(interval)
+	}
+}
+
 // EntitySummary is a representation of an entity used for listing.
 type EntitySummary struct {
 	Identifier string         `json:"identifier"`
@@ -296,6 +336,33 @@ func (c *Client) SearchEntities(blueprint string) ([]EntitySummary, error) {
 	return result.Entities, nil
 }
 
+// metaFields are an entity's top-level fields, which the search API addresses
+// with a "$" prefix. It treats an unprefixed "identifier" as a regular
+// property and quietly matches nothing, so a filter on one of these returns
+// zero results for entities that plainly exist unless it is translated.
+var metaFields = map[string]bool{
+	"identifier": true,
+	"title":      true,
+	"blueprint":  true,
+	"team":       true,
+	"createdAt":  true,
+	"updatedAt":  true,
+	"createdBy":  true,
+	"updatedBy":  true,
+}
+
+// searchProperty translates a filter field into the property name the search
+// API expects, leaving ordinary properties and already-prefixed names alone.
+func searchProperty(field string) string {
+	if strings.HasPrefix(field, "$") {
+		return field
+	}
+	if metaFields[field] {
+		return "$" + field
+	}
+	return field
+}
+
 // SearchEntitiesWithFilter lists entities for a blueprint filtered by a property value.
 func (c *Client) SearchEntitiesWithFilter(blueprint, field, value string) ([]EntitySummary, error) {
 	body := map[string]any{
@@ -306,7 +373,7 @@ func (c *Client) SearchEntitiesWithFilter(blueprint, field, value string) ([]Ent
 				"value":    blueprint,
 			},
 			{
-				"property": field,
+				"property": searchProperty(field),
 				"operator": "=",
 				"value":    value,
 			},
@@ -445,6 +512,16 @@ type ActionDetail struct {
 			Order      []string               `json:"order"`
 		} `json:"userInputs"`
 	} `json:"trigger"`
+	InvocationMethod struct {
+		Type                string `json:"type"`
+		BlueprintIdentifier string `json:"blueprintIdentifier"`
+		Mapping             struct {
+			Identifier string `json:"identifier"`
+			// Values are templates, but a mapping may nest objects or arrays,
+			// so decode loosely rather than failing the whole action fetch.
+			Properties map[string]any `json:"properties"`
+		} `json:"mapping"`
+	} `json:"invocationMethod"`
 }
 
 // GetAction fetches a self-service action and its input schema by identifier.

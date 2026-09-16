@@ -37,8 +37,11 @@ portcli/
 │   ├── get_entity.go              # `entity get <blueprint> <entity-id>` — fetch entity
 │   ├── update_entity.go           # `entity update <blueprint> [entity-id]` — update entity field
 │   ├── delete_entity.go           # `entity delete <blueprint> [entity-id]` — delete entity
+│   ├── wait_entity.go             # `entity wait <blueprint> <entity-id>` — poll until a property matches
 │   ├── action.go                  # `action` parent command
-│   ├── run.go                     # `action run <action-id>` — execute action, optional wait/poll
+│   ├── get_action.go              # `action get <action-id>` — show an action's input schema
+│   ├── run.go                     # `action run <action-id>` — execute action, optional wait/poll,
+│   │                              #   verifies the entity for UPSERT_ENTITY actions
 │   ├── status.go                  # `action status <run-id>` — get action run status
 │   ├── logs.go                    # `action logs <run-id>` — get action run logs
 │   └── list_runs.go               # `action list` — list action runs with filters
@@ -62,10 +65,33 @@ portcli/
 | `entity get` | `<blueprint> [entity-id]` | Fetch entity (full JSON), or list entities as table if no ID given. Flags: `--property`/`-p` (print single property value), `--filter`/`-f` (filter by field=value), `--columns`/`-c` (comma-separated property columns to show, default: identifier only) |
 | `entity update` | `<blueprint> [entity-id] [key=value ...]` | Update entity properties. Flags: `--json` (JSON object), `--all`, `--filter`/`-f` (filter by field=value, implies --all) |
 | `entity delete` | `<blueprint> [entity-id]` | Delete entity. Flags: `--all`, `--yes`/`-y`, `--filter`/`-f` (with --all, filter by field=value) |
-| `action run` | `<action-identifier>` | Execute action. Flags: `--input`, `--wait`, `--poll`, `--timeout`, `--run-as`, `--entity`, `--id` |
+| `entity wait` | `<blueprint> <entity-id>` | Poll an entity until a property matches a regex. Flags: `--property`/`-p` (default `status`), `--for` (success regex, required), `--fail-for`, `--timeout` (default 3600), `--interval` (default 20) |
+| `action get` | `<action-identifier>` | Show a self-service action's input schema. Flags: `--json`, `--enum <input>` |
+| `action run` | `<action-identifier>` | Execute action. Flags: `--input`, `--wait`, `--poll`, `--timeout`, `--run-as`, `--entity`, `--id`, `--json` |
 | `action status` | `<run-id>` | Get action run status |
 | `action logs` | `<run-id>` | Get action run logs |
 | `action list` | | List action runs as table. Flags: `--entity`/`-e`, `--blueprint`/`-b`, `--action`/`-a` (client-side), `--status`/`-s` (client-side, case-insensitive), `--limit`/`-l` (default 20), `--json` |
+
+## Port API behaviors worth knowing
+
+- **Entity filters must be translated.** Port's `/v1/entities/search` addresses an
+  entity's top-level fields with a `$` prefix (`$identifier`, `$title`, `$createdAt`, …).
+  An unprefixed name is read as an ordinary property and silently matches nothing, so
+  `client.searchProperty` maps the bare names before building the rule. Every `--filter`
+  on `entity get`/`update`/`delete` goes through `SearchEntitiesWithFilter`, so that one
+  translation covers all of them.
+- **`UPSERT_ENTITY` actions keep no run record.** Port returns a run id from
+  `POST /v1/actions/{id}/runs`, then discards it — `GET /v1/actions/runs/{id}` 404s
+  whether or not the upsert succeeded, and the run never appears in `action list`.
+  `--wait` and `action status` are therefore useless for these actions, and the entity
+  is the only evidence. `action run` detects this backend and verifies the target entity
+  instead (`verifyUpsert` in `cmd/run.go`).
+- **A required blueprint property that resolves empty silently drops the upsert.** The
+  common cause is a hidden action input defaulted from a jqQuery such as `.user.email`,
+  which resolves to nothing under client-credential auth. `unresolvedRequired` reports
+  exactly which ones did not resolve.
+- **`GET /v1/actions/runs/{id}/logs` answers 200 with an empty list** for a run that
+  does not exist, so an empty result is ambiguous rather than proof of no output.
 
 ## Configuration
 - Env vars: `PORT_CLIENT_ID`, `PORT_CLIENT_SECRET`, `PORT_BASE_URL`

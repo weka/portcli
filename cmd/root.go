@@ -11,10 +11,13 @@ import (
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:          "portcli",
-	Short:        "CLI for Port.io self-service actions",
-	Version:      Version,
-	SilenceUsage: true,
+	Use:     "portcli",
+	Short:   "CLI for Port.io self-service actions",
+	Version: Version,
+	// Execute prints the error itself; without SilenceErrors cobra prints it
+	// too, doubling every failure message.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func init() {

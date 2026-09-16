@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,6 +73,22 @@ func runAction(cmd *cobra.Command, args []string) error {
 	runID := result.Run.ID
 	fmt.Fprintf(os.Stderr, "Run created: %s (status: %s)\n", runID, result.Run.Status)
 
+	// Port keeps no run record for UPSERT_ENTITY actions: the run id 404s
+	// immediately whether or not the upsert succeeded, so neither --wait nor
+	// `action status` can ever report the outcome. The entity is the only
+	// evidence, so confirm it landed instead of reporting a phantom success.
+	upserted, err := verifyUpsert(c, actionID, runID, result.Run.Properties)
+	if err != nil {
+		return err
+	}
+	if upserted != nil {
+		result.Run.Status = "SUCCESS"
+		result.Run.Link, _ = json.Marshal([]client.EntityLink{{
+			Blueprint:  upserted.Entity.Blueprint,
+			Identifier: upserted.Entity.Identifier,
+		}})
+	}
+
 	if wait && result.Run.Status == "IN_PROGRESS" {
 		fmt.Fprintf(os.Stderr, "Waiting for completion (timeout: %ds)...\n", timeoutSecs)
 		result, err = c.WaitForRun(
@@ -99,6 +117,114 @@ func runAction(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("run %s finished with status FAILURE", runID)
 	}
 	return nil
+}
+
+// explainMissingRun annotates a 404 from a run lookup. Port discards the run
+// record for UPSERT_ENTITY actions as soon as they finish, so those ids never
+// resolve whether the action succeeded or not; unannotated, the 404 reads as
+// if the run were lost.
+func explainMissingRun(err error) error {
+	if !client.IsNotFound(err) {
+		return err
+	}
+	return fmt.Errorf("%w\n  (Port keeps no run record for UPSERT_ENTITY actions, so their run ids never resolve — inspect the target entity instead)", err)
+}
+
+// inputRefRe matches the "{{ .inputs.NAME }}" mapping form, the shape Port
+// uses to copy an action input straight into an upserted entity.
+var inputRefRe = regexp.MustCompile(`^\{\{\s*\.inputs\.([A-Za-z0-9_]+)\s*\}\}$`)
+
+// inputRef reports the input name a mapping template reads, if it reads exactly one.
+func inputRef(tmpl string) (string, bool) {
+	m := inputRefRe.FindStringSubmatch(strings.TrimSpace(tmpl))
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// verifyUpsert confirms the entity an UPSERT_ENTITY action was meant to write
+// actually exists, turning a silently dropped upsert into a real error. It
+// returns (nil, nil) for any other action type, or when the target entity
+// cannot be determined — in those cases there is nothing to check and the
+// normal run-status flow applies.
+func verifyUpsert(c *client.Client, actionID, runID string, runProps map[string]any) (*client.Entity, error) {
+	action, err := c.GetAction(actionID)
+	if err != nil || action.InvocationMethod.Type != "UPSERT_ENTITY" {
+		return nil, nil
+	}
+
+	blueprint := action.InvocationMethod.BlueprintIdentifier
+	target := upsertTarget(action, runProps)
+	if blueprint == "" || target == "" {
+		return nil, nil
+	}
+
+	// The upsert is not synchronous with the response — it lands a few hundred
+	// milliseconds later — so allow a short grace period before concluding it
+	// never happened.
+	entity, err := c.PollEntity(blueprint, target, 10*time.Second, 250*time.Millisecond,
+		func(_ *client.Entity, fetchErr error) (bool, error) { return fetchErr == nil, nil })
+	if err == nil {
+		return entity, nil
+	}
+
+	var detail string
+	if unresolved := unresolvedRequired(c, action, runProps); len(unresolved) > 0 {
+		detail = fmt.Sprintf("\n  required %s properties that did not resolve:\n    %s",
+			blueprint, strings.Join(unresolved, "\n    "))
+	}
+	return nil, fmt.Errorf(
+		"action %s did not create entity %s/%s%s\n  (Port stores no run record for UPSERT_ENTITY actions, so run %s cannot be inspected)",
+		actionID, blueprint, target, detail, runID)
+}
+
+// upsertTarget resolves the identifier an UPSERT_ENTITY action writes to.
+// --id wins because Port applies it as the created entity's identifier;
+// otherwise the mapping is normally a template over one of the inputs.
+func upsertTarget(action *client.ActionDetail, runProps map[string]any) string {
+	if identifier != "" {
+		return identifier
+	}
+	tmpl := strings.TrimSpace(action.InvocationMethod.Mapping.Identifier)
+	if name, ok := inputRef(tmpl); ok {
+		return anyToString(runProps[name])
+	}
+	if !strings.Contains(tmpl, "{{") {
+		return tmpl // a static identifier
+	}
+	return "" // a template we cannot evaluate (jq, concatenation, …)
+}
+
+// unresolvedRequired names blueprint-required properties whose mapped value
+// came out empty. A hidden input defaulted from a jqQuery such as .user.email
+// is the usual cause: it resolves to nothing when the action runs on client
+// credentials rather than as a real user, and the upsert is then rejected.
+func unresolvedRequired(c *client.Client, action *client.ActionDetail, runProps map[string]any) []string {
+	bp, err := c.GetBlueprint(action.InvocationMethod.BlueprintIdentifier)
+	if err != nil {
+		return nil
+	}
+	mapping := action.InvocationMethod.Mapping.Properties
+
+	var unresolved []string
+	for _, name := range bp.Schema.Required {
+		tmpl, mapped := mapping[name]
+		if !mapped {
+			unresolved = append(unresolved, name+" — not set by the action mapping")
+			continue
+		}
+		input, ok := inputRef(anyToString(tmpl))
+		if !ok {
+			continue // a literal or expression we cannot evaluate; assume it resolved
+		}
+		if anyToString(runProps[input]) == "" {
+			unresolved = append(unresolved,
+				fmt.Sprintf("%s — from input %q, which resolved empty (pass --input %s=...)", name, input, input))
+		}
+	}
+	sort.Strings(unresolved)
+	return unresolved
 }
 
 // emitRunJSON prints a single, stable JSON object describing the run — enough to
