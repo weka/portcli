@@ -68,30 +68,30 @@ func (a *App) globalCapture(ev *tcell.EventKey) *tcell.EventKey {
 func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 	switch ev.Key() {
 	case tcell.KeyCtrlR:
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			t.refreshNow(a.ctx)
 			a.flash.show(flashInfo, "refreshing")
 		}
 		return true
 	case tcell.KeyCtrlW:
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			t.toggleWide()
 		}
 		return true
 	case tcell.KeyCtrlA:
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			t.markAllVisible()
 		}
 		return true
 	case tcell.KeyCtrlBackslash:
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			t.clearMarks()
 		}
 		return true
 	case tcell.KeyEscape:
 		// A filter is the innermost thing Escape should clear, before it
 		// starts closing views.
-		if t, ok := a.top().(*tableView); ok && t.filterIn != "" {
+		if t, ok := a.table(); ok && t.filterIn != "" {
 			_ = t.setFilter("")
 			a.flash.show(flashInfo, "filter cleared")
 			return true
@@ -116,7 +116,7 @@ func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 		a.pop()
 		return true
 	case ' ':
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			t.toggleMark()
 		}
 		return true
@@ -126,7 +126,7 @@ func (a *App) handleGlobalKey(ev *tcell.EventKey) bool {
 
 // rowsForOp is the selection an operation applies to.
 func (a *App) rowsForOp() []Row {
-	if t, ok := a.top().(*tableView); ok {
+	if t, ok := a.table(); ok {
 		return t.selection()
 	}
 	return nil

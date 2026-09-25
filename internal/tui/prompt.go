@@ -45,7 +45,7 @@ func (a *App) openPrompt(mode promptMode) {
 	if mode == promptFilter {
 		label = "/"
 		// Seed with the active filter so "/" is an edit, not a retype.
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			seed = t.filterIn
 		}
 	}
@@ -80,7 +80,7 @@ func (a *App) submitPrompt(text string) {
 			a.flash.show(flashInfo, "filter cleared")
 			return
 		}
-		if t, ok := a.top().(*tableView); ok {
+		if t, ok := a.table(); ok {
 			shown, total, _ := t.counts()
 			if shown == 0 {
 				a.flash.show(flashWarn, "no rows match %q (of %d)", text, total)
@@ -132,7 +132,7 @@ func (a *App) setColumns(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: :cols <property>[,<property>...]")
 	}
-	t, ok := a.top().(*tableView)
+	t, ok := a.table()
 	if !ok {
 		return fmt.Errorf("this view has no columns")
 	}
@@ -164,7 +164,7 @@ func (a *App) setRefresh(args []string) error {
 	if err != nil {
 		return err
 	}
-	t, ok := a.top().(*tableView)
+	t, ok := a.table()
 	if !ok {
 		return fmt.Errorf("this view does not refresh")
 	}

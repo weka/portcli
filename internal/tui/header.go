@@ -76,18 +76,21 @@ func (h headerInfo) headerLines() []string {
 	}
 
 	return []string{
-		field("Base URL", h.BaseURL),
-		field("Auth", h.AuthSource),
-		field("Client ID", maskID(h.ClientID)),
-		field("Version", h.Version),
-		field("Resource", h.Resource),
-		field("Refresh", refresh),
-		field("Rows", rows),
+		fieldLine("Base URL", h.BaseURL, 11),
+		fieldLine("Auth", h.AuthSource, 11),
+		fieldLine("Client ID", maskID(h.ClientID), 11),
+		fieldLine("Version", h.Version, 11),
+		fieldLine("Resource", h.Resource, 11),
+		fieldLine("Refresh", refresh, 11),
+		fieldLine("Rows", rows, 11),
 	}
 }
 
-func field(name, value string) string {
-	return fmt.Sprintf("[darkcyan::b]%-11s[white::-]%s", name+":", value)
+// fieldLine renders a "Name: value" row of the label-and-value style used by
+// the context panel and the status cards. width aligns the labels within one
+// block; blocks differ, so it is a parameter rather than a constant.
+func fieldLine(name, value string, width int) string {
+	return fmt.Sprintf("[darkcyan::b]%-*s[white::-]%s", width, name+":", value)
 }
 
 // hintLines renders the key hints beside the context panel: the operations the

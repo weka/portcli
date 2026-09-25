@@ -289,7 +289,7 @@ func (r *entitiesResource) edit(a *App, rows []Row) error {
 		return fmt.Errorf("cannot update %s: %w", id, err)
 	}
 	a.flash.show(flashInfo, "updated %s on %s", DiffSummary(changed), id)
-	if t, ok := a.top().(*tableView); ok {
+	if t, ok := a.table(); ok {
 		t.refreshNow(a.ctx)
 	}
 	return nil
@@ -336,7 +336,7 @@ func (r *entitiesResource) delete(a *App, rows []Row) error {
 // afterDelete clears the marks the operation consumed and refetches, so the
 // table does not keep offering rows that are gone.
 func (r *entitiesResource) afterDelete(a *App) {
-	if t, ok := a.top().(*tableView); ok {
+	if t, ok := a.table(); ok {
 		t.marked = map[string]bool{}
 		t.refreshNow(a.ctx)
 	}

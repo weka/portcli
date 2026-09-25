@@ -29,11 +29,10 @@ type upsertVerifyView struct {
 	view *tview.TextView
 	ref  refresher
 
-	entity      *client.Entity
-	failure     error
-	unresolved  []string
-	done        bool
-	retryTarget string
+	entity     *client.Entity
+	failure    error
+	unresolved []string
+	done       bool
 }
 
 func newUpsertVerifyView(a *App, spec FormSpec, req upsert.Request, values map[string]string) *upsertVerifyView {
@@ -112,7 +111,6 @@ func (v *upsertVerifyView) collectDiagnosis(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	v.retryTarget = upsert.Target(action, v.req.RunProps, v.req.Identifier)
 	v.unresolved = upsert.UnresolvedRequired(ctx, v.app.client, action, v.req.RunProps)
 }
 
@@ -136,14 +134,12 @@ func (v *upsertVerifyView) retry(a *App) error {
 
 func (v *upsertVerifyView) render() {
 	var b strings.Builder
-	field := func(name, value string) {
-		fmt.Fprintf(&b, "[darkcyan::b]%-12s[white::-]%s\n", name+":", value)
-	}
+	field := func(name, value string) { b.WriteString(fieldLine(name, value, 12) + "\n") }
 
 	field("Action", v.req.ActionID)
 	field("Backend", "UPSERT_ENTITY")
-	fmt.Fprintf(&b, "[darkcyan::b]%-12s[white::-]%s\n", "Run ID:",
-		v.req.RunID+"  [dimgray](Port keeps no record for these — this id will never resolve, by design)[-]")
+	field("Run ID", v.req.RunID+
+		"  [dimgray](Port keeps no record for these — this id will never resolve, by design)[-]")
 	if v.spec.Blueprint != "" {
 		field("Target", v.spec.Blueprint+"/"+v.req.Identifier)
 	}

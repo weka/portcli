@@ -66,12 +66,9 @@ func (v *runWatchView) Stop() {
 }
 
 func (v *runWatchView) Ops() []Op {
-	ops := []Op{
-		{Rune: 'f', Name: "Follow on/off", Run: func(a *App, _ []Row) error {
-			v.logs.follow = !v.logs.follow
-			v.logs.render()
-			return nil
-		}},
+	// The log pane is the bottom half of this view, so its own operations —
+	// follow and copy — apply here unchanged rather than being reimplemented.
+	ops := append(v.logs.Ops(), []Op{
 		{Rune: 'd', Name: "Describe run", Run: func(a *App, _ []Row) error {
 			if v.run == nil {
 				return fmt.Errorf("the run has not been read yet")
@@ -79,7 +76,7 @@ func (v *runWatchView) Ops() []Op {
 			a.push(newDescribeView(a, "run/"+v.runID, v.runID, v.run.Run))
 			return nil
 		}},
-	}
+	}...)
 	// Only offer the link once there is something to follow.
 	if v.run != nil && len(v.run.GetLinkedEntities()) > 0 {
 		ops = append(ops, Op{Rune: 'e', Name: "Linked entity", Run: func(a *App, _ []Row) error {
@@ -128,9 +125,7 @@ func (v *runWatchView) Start(ctx context.Context) {
 
 func (v *runWatchView) render() {
 	var b strings.Builder
-	field := func(name, value string) {
-		fmt.Fprintf(&b, "[darkcyan::b]%-11s[white::-]%s\n", name+":", value)
-	}
+	field := func(name, value string) { b.WriteString(fieldLine(name, value, 11) + "\n") }
 
 	field("Action", v.actionID)
 	if v.run == nil {

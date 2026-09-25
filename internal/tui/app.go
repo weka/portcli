@@ -243,6 +243,14 @@ func (a *App) pop() {
 	a.drawCrumbs()
 }
 
+// table returns the current view as a table, if it is one. Most global keys
+// and palette commands only mean something over a table, and naming that once
+// keeps the type assertion out of every one of them.
+func (a *App) table() (*tableView, bool) {
+	t, ok := a.top().(*tableView)
+	return t, ok
+}
+
 func (a *App) top() View {
 	if len(a.stack) == 0 {
 		return nil
