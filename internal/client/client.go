@@ -629,12 +629,78 @@ func (c *Client) WaitForRun(ctx context.Context, runID string, pollInterval, tim
 //
 // The json tag stays bare: a nil json.RawMessage marshals to null exactly as
 // the previous []any did, so `action get --json` is unchanged.
+// The fields below Enum are all omitempty, so an input that does not have
+// them serialises exactly as before. An input that does gains a key in
+// `action get --json`, which until now dropped these on the floor — the
+// schema dump was lossy, and a form cannot be built from what it omitted.
 type ActionInput struct {
 	Type        string          `json:"type"`
 	Title       string          `json:"title"`
 	Description string          `json:"description"`
 	Default     any             `json:"default"`
 	Enum        json.RawMessage `json:"enum"`
+
+	// Visible is raw for the same reason as Enum: Port sends either a bool or
+	// a {"jqQuery": …} it evaluates itself.
+	Visible json.RawMessage `json:"visible,omitempty"`
+	// Format with Blueprint marks an input that names an entity, which is
+	// what lets a form offer the real choices instead of free text.
+	Format    string `json:"format,omitempty"`
+	Blueprint string `json:"blueprint,omitempty"`
+
+	Pattern   string   `json:"pattern,omitempty"`
+	MinLength *int     `json:"minLength,omitempty"`
+	MaxLength *int     `json:"maxLength,omitempty"`
+	Minimum   *float64 `json:"minimum,omitempty"`
+	Maximum   *float64 `json:"maximum,omitempty"`
+	DependsOn []string `json:"dependsOn,omitempty"`
+	// Dataset narrows an entity input's choices. Kept raw: the rule grammar is
+	// richer than anything worth decoding to filter a picker.
+	Dataset json.RawMessage `json:"dataset,omitempty"`
+	Items   json.RawMessage `json:"items,omitempty"`
+}
+
+// DefaultValue returns the input's static default. ok is false when there is
+// none, or when Port computes it server-side from a query — which is the case
+// worth surfacing, since such a default resolves to nothing under client
+// credentials and is the usual reason a required property ends up empty.
+func (i ActionInput) DefaultValue() (any, bool) {
+	if i.Default == nil {
+		return nil, false
+	}
+	if m, isObject := i.Default.(map[string]any); isObject {
+		if _, isQuery := m["jqQuery"]; isQuery {
+			return nil, false
+		}
+	}
+	return i.Default, true
+}
+
+// DynamicDefault reports whether the default comes from a server-side query.
+func (i ActionInput) DynamicDefault() bool {
+	m, isObject := i.Default.(map[string]any)
+	if !isObject {
+		return false
+	}
+	_, isQuery := m["jqQuery"]
+	return isQuery
+}
+
+// ConditionalVisibility reports whether Port decides this input's visibility
+// with a query. Such an input is still submitted, and a hidden one whose
+// default resolves empty is exactly how an upsert gets silently dropped — so
+// a UI is better off showing it than hiding it.
+func (i ActionInput) ConditionalVisibility() bool {
+	if isJSONNull(i.Visible) {
+		return false
+	}
+	var b bool
+	return json.Unmarshal(i.Visible, &b) != nil
+}
+
+// IsEntityRef reports whether the input names an entity of a blueprint.
+func (i ActionInput) IsEntityRef() bool {
+	return i.Format == "entity" && i.Blueprint != ""
 }
 
 // EnumValues returns the input's choices, distinguishing the three shapes Port

@@ -125,6 +125,20 @@ func (r *actionsResource) Ops() []Op {
 			Run:  func(a *App, rows []Row) error { return showInputs(a, rows) },
 		},
 		{
+			Rune: 'r',
+			Name: "Run",
+			Run: func(a *App, rows []Row) error {
+				action, ok := rows[0].Obj.(client.ActionDetail)
+				if !ok {
+					return fmt.Errorf("unexpected row contents for %s", rows[0].ID)
+				}
+				// The list payload already carries the trigger inputs, so the
+				// form opens without another request.
+				a.push(newRunFormView(a, action))
+				return nil
+			},
+		},
+		{
 			Rune: 'd',
 			Name: "Describe",
 			Run: func(a *App, rows []Row) error {
