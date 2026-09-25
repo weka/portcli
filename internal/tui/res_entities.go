@@ -232,9 +232,23 @@ func (r *entitiesResource) Ops() []Op {
 		},
 		{
 			Rune: 'l',
-			Name: "Runs",
+			Name: "Run history",
 			Run: func(a *App, rows []Row) error {
 				return a.open(fmt.Sprintf("runs %s %s", r.blueprint, rows[0].ID))
+			},
+		},
+		{
+			Rune: 'a',
+			Name: "Run an action",
+			Run: func(a *App, rows []Row) error {
+				// Built directly rather than through a.open: an identifier we
+				// already hold should not be round-tripped through palette
+				// syntax. See pushResource.
+				a.pushResource(&actionsResource{
+					blueprint: r.blueprint,
+					entity:    rows[0].ID,
+				})
+				return nil
 			},
 		},
 		{

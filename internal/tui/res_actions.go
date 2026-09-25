@@ -18,13 +18,20 @@ import (
 // invocation mapping. Nothing here needs a follow-up GetAction.
 type actionsResource struct {
 	blueprint string // optional, narrows to actions on one blueprint
+	// entity is the entity a run started from this view is aimed at. It
+	// narrows the *run*, not the list — see List.
+	entity string
 }
 
 func init() {
 	Register("actions", []string{"act", "a"}, func(args []string) (Resource, error) {
 		r := &actionsResource{}
-		if len(args) > 0 {
+		switch len(args) {
+		case 0:
+		case 1:
 			r.blueprint = args[0]
+		default:
+			r.blueprint, r.entity = args[0], args[1]
 		}
 		return r, nil
 	})
@@ -33,17 +40,25 @@ func init() {
 func (r *actionsResource) Kind() string { return "actions" }
 
 func (r *actionsResource) ID() string {
-	if r.blueprint != "" {
+	switch {
+	case r.entity != "":
+		return fmt.Sprintf("actions %s %s", r.blueprint, r.entity)
+	case r.blueprint != "":
 		return "actions " + r.blueprint
+	default:
+		return "actions"
 	}
-	return "actions"
 }
 
 func (r *actionsResource) Title() string {
-	if r.blueprint != "" {
+	switch {
+	case r.entity != "":
+		return fmt.Sprintf("actions(%s→%s)", r.blueprint, r.entity)
+	case r.blueprint != "":
 		return fmt.Sprintf("actions(%s)", r.blueprint)
+	default:
+		return "actions"
 	}
-	return "actions"
 }
 
 func (r *actionsResource) Columns() []Column {
@@ -58,6 +73,11 @@ func (r *actionsResource) Columns() []Column {
 	}
 }
 
+// List returns the actions on the blueprint, minus CREATE ones when the view is
+// scoped to an entity: a CREATE action makes its own entity, so running one from
+// an existing entity can only ignore that entity or collide with it. Every other
+// operation stays — the entity decides what a run is aimed at, not which actions
+// exist, and filtering further would hide actions the catalog legitimately offers.
 func (r *actionsResource) List(ctx context.Context, c *client.Client) ([]Row, error) {
 	actions, err := c.ListActions(ctx)
 	if err != nil {
@@ -67,6 +87,9 @@ func (r *actionsResource) List(ctx context.Context, c *client.Client) ([]Row, er
 	rows := make([]Row, 0, len(actions))
 	for _, a := range actions {
 		if r.blueprint != "" && !strings.EqualFold(a.Trigger.BlueprintIdentifier, r.blueprint) {
+			continue
+		}
+		if r.entity != "" && isCreateOperation(a.Trigger.Operation) {
 			continue
 		}
 		approval := ""
@@ -134,7 +157,7 @@ func (r *actionsResource) Ops() []Op {
 				}
 				// The list payload already carries the trigger inputs, so the
 				// form opens without another request.
-				a.push(newRunFormView(a, action))
+				a.push(newRunFormView(a, action, runPrefill{TargetEntity: r.entity}))
 				return nil
 			},
 		},

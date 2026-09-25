@@ -21,10 +21,12 @@ import (
 // both of which would look like failures regardless of the outcome. The
 // entity is the only evidence there is.
 type upsertVerifyView struct {
-	app    *App
-	spec   FormSpec
-	req    upsert.Request
-	values map[string]string
+	app  *App
+	spec FormSpec
+	req  upsert.Request
+	// pre is the attempt this view is reporting on, kept so a retry can
+	// rebuild the form from it rather than from the bare schema.
+	pre runPrefill
 
 	view *tview.TextView
 	ref  refresher
@@ -35,11 +37,11 @@ type upsertVerifyView struct {
 	done       bool
 }
 
-func newUpsertVerifyView(a *App, spec FormSpec, req upsert.Request, values map[string]string) *upsertVerifyView {
+func newUpsertVerifyView(a *App, spec FormSpec, req upsert.Request, pre runPrefill) *upsertVerifyView {
 	v := tview.NewTextView().SetDynamicColors(true).SetScrollable(true)
 	v.SetTitle(" upsert verification ").SetBorder(true).SetBorderColor(colorBorder)
 
-	u := &upsertVerifyView{app: a, spec: spec, req: req, values: values, view: v}
+	u := &upsertVerifyView{app: a, spec: spec, req: req, pre: pre, view: v}
 	u.ref.app = a.app
 	u.render()
 	return u
@@ -119,14 +121,16 @@ func (v *upsertVerifyView) retry(a *App) error {
 	if err != nil {
 		return fmt.Errorf("cannot reopen the form: %w", err)
 	}
-	form := newRunFormView(a, *action)
-	// Carry the previous answers over so only the empty one needs attention.
-	for name, value := range v.values {
-		if value != "" {
-			form.values[name] = value
-		}
-	}
+	// The previous answers and target are carried over, so only the input
+	// that resolved empty needs attention.
+	form := newRunFormView(a, *action, v.pre)
+
 	a.pop() // leave the verification behind; it is about the previous attempt
+	// And pop the form under it too. submit pushed this view without popping
+	// the form that produced it, so that form's page is still registered —
+	// and push skips AddPage when a page of the same ID already exists, which
+	// would leave the old primitive on screen under the new view.
+	a.pop()
 	a.push(form)
 	a.flash.show(flashInfo, "previous inputs carried over — fill the unresolved one")
 	return nil

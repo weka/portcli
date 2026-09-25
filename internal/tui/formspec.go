@@ -59,6 +59,25 @@ type FormSpec struct {
 // entity, which is the case with no run record to inspect afterwards.
 func (s FormSpec) IsUpsert() bool { return s.Backend == "UPSERT_ENTITY" }
 
+// AcceptsTargetEntity reports whether a run of this action can be aimed at an
+// entity that already exists.
+//
+// A CREATE action makes the entity it is run for, so a target would be a field
+// Port has no use for; everything else acts on one that is already there. An
+// empty operation is a v1-shaped trigger, and those are day-2 far more often
+// than not — a stray target is tolerated far better than a dropped one, so the
+// unknown case errs towards sending it.
+func (s FormSpec) AcceptsTargetEntity() bool {
+	return !isCreateOperation(s.Operation)
+}
+
+// isCreateOperation is the one place that spells Port's CREATE operation, so
+// the catalog and the form cannot disagree about which actions make an entity
+// rather than act on one.
+func isCreateOperation(op string) bool {
+	return strings.EqualFold(op, "CREATE")
+}
+
 // BuildFormSpec turns an action into a form.
 //
 // Two decisions worth stating. Inputs whose visibility is a server-side query

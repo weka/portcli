@@ -57,11 +57,12 @@ blueprint list again.
 
 | Key | |
 |---|---|
-| `:` | command palette — `blueprints`, `entities <blueprint>`, `actions`, `runs` |
+| `:` | command palette — `blueprints`, `entities <blueprint>`, `actions [blueprint [entity]]`, `runs` |
 | `/` | filter the rows on screen as you type (regex, case-insensitive); `esc` puts the previous filter back |
 | `enter` | drill into the selected row |
 | `d` | describe — the full object as JSON |
-| `l` | logs (on a run) · an entity's runs (on an entity) |
+| `l` | logs (on a run) · an entity's run history (on an entity) |
+| `a` | the actions available on an entity's blueprint, aimed at that entity |
 | `r` | run the selected action |
 | `e` | edit an entity's properties in `$EDITOR` |
 | `ctrl-d` | delete (asks first) |
@@ -79,6 +80,15 @@ Editing an entity opens its properties as JSON in `$EDITOR` (`$VISUAL` first,
 then `vi`) and sends only the properties that changed. Emptying the file cancels;
 saving something that is not valid JSON reopens the editor with the parse error
 at the top rather than discarding the edit.
+
+To act on an entity, press `a` on its row. That lists the actions on its
+blueprint that can act on an entity that already exists — the `CREATE` ones are
+left out, since a `CREATE` action makes its own entity and running one against
+the entity you selected would either ignore it or collide with it. `r` opens the
+run form with the entity already filled in as the run's target, so it is not
+retyped. `l` on an entity is the other direction: the runs already carried out
+against it. To reach the whole catalog, `CREATE` actions included, open
+`:actions` (or `:actions <blueprint>`) without going through an entity.
 
 Actions that Port carries out itself by writing an entity (`UPSERT_ENTITY`) get a
 verification screen instead of a run watcher, because Port keeps no run record

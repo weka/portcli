@@ -56,6 +56,26 @@ CLI tool for Port.io self-service actions. Built in Go with Cobra CLI framework.
 - `tview.Table` binds `h`/`l` to column scrolling with no guard, so both are
   stolen globally (`stolenKeys`) to free `l` for logs; arrows still scroll.
   A test asserts no resource binds a key Table already owns.
+- **A view's `ID()` is the body page key, and `push` reuses a page whose ID
+  matches** rather than replacing it — so an ID that omits a distinguishing
+  argument shows the *previous* view's primitive under the new view's title.
+  `runFormView.ID()` therefore includes the target entity, and
+  `actionsResource.ID()` includes it too. `upsertVerifyView.retry` pops twice
+  for the same reason: `submit` pushes the verification without popping the
+  form beneath it, so that form's page is still registered.
+- `a` on an entity opens `actionsResource{blueprint, entity}` — the blueprint's
+  catalog minus its `CREATE` actions, which make their own entity and so can
+  only ignore or collide with the one already selected. Every other operation
+  stays: the entity narrows what a run is *aimed at*, not which actions exist.
+  Whether the target is actually sent is `FormSpec.AcceptsTargetEntity()`, and
+  both it and the list filter go through `isCreateOperation` so the two cannot
+  disagree. An empty operation is a v1 trigger and counts as day-2 — Port
+  tolerates a stray target far better than a dropped one — so it is listed.
+- **`runPrefill` is the only way into a form's initial state.** `AddInputField`
+  sets the text *before* installing the changed callback, so a prefilled widget
+  never notifies anything; `v.entity` and `v.values` must be assigned directly.
+  `TestTargetEntityReachesTheValueThatIsSubmitted` is what catches the mistake —
+  a form that looks right on screen and submits a run with no target at all.
 - The client secret is never rendered; the client id is masked. There is a test.
 - **Never call `screen.Init()` or `screen.Fini()`.** `Application.SetScreen`
   calls Init and `Application.Stop` calls Fini; doing either a second time

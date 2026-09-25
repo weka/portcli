@@ -28,14 +28,26 @@ type runFormView struct {
 	entityCache map[string][]string
 	// advanced mirror the CLI's --run-as / --entity / --id flags.
 	runAs, entity, identifier string
+	pre                       runPrefill
 }
 
-func newRunFormView(a *App, action client.ActionDetail) *runFormView {
+// runPrefill is what a caller already knows about the run before the form is
+// built: the entity the user had selected, and the answers from an attempt
+// being retried. Both used to be written into the view *after* construction,
+// which left the widgets and the values map disagreeing until the user
+// retyped. Going through the constructor is what keeps the two in step.
+type runPrefill struct {
+	TargetEntity string            // --entity; withheld from CREATE actions
+	Values       map[string]string // carried over from a previous attempt
+}
+
+func newRunFormView(a *App, action client.ActionDetail, pre runPrefill) *runFormView {
 	v := &runFormView{
 		app:         a,
 		spec:        BuildFormSpec(&action),
 		values:      map[string]string{},
 		entityCache: map[string][]string{},
+		pre:         pre,
 	}
 
 	v.form = tview.NewForm()
@@ -51,28 +63,42 @@ func newRunFormView(a *App, action client.ActionDetail) *runFormView {
 	title := fmt.Sprintf(" run %s ", v.spec.ActionID)
 	v.form.SetTitle(title).SetBorder(true).SetBorderColor(colorBorder)
 
+	// Sized from the text rather than a constant: the summary grows by a line
+	// when the run has a target, and a fixed height would cut it off.
+	lines := v.summaryLines()
 	header := tview.NewTextView().SetDynamicColors(true)
-	header.SetText(v.summary())
+	header.SetText(strings.Join(lines, "\n"))
 
 	v.flex = tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(header, 3, 0, false).
+		AddItem(header, len(lines)+1, 0, false).
 		AddItem(v.form, 0, 1, true)
 	return v
 }
 
-// summary states what will happen, including the warning that matters most:
-// an UPSERT_ENTITY action leaves no run to inspect.
-func (v *runFormView) summary() string {
+// summaryLines states what will happen, including the warning that matters
+// most: an UPSERT_ENTITY action leaves no run to inspect. Called after
+// buildFields, which is what decides whether the target was accepted.
+func (v *runFormView) summaryLines() []string {
 	lines := []string{
 		fmt.Sprintf("[darkcyan]action[-]    %s   [darkcyan]blueprint[-] %s   [darkcyan]operation[-] %s",
 			v.spec.ActionID, v.spec.Blueprint, v.spec.Operation),
 		fmt.Sprintf("[darkcyan]backend[-]   %s", v.spec.Backend),
 	}
+	switch {
+	case v.entity != "":
+		lines = append(lines, fmt.Sprintf("[darkcyan]target[-]    %s", v.entity))
+	case v.pre.TargetEntity != "":
+		// Offered a target and declined it. Saying so beats leaving the user
+		// to wonder why the entity they selected is nowhere on the screen.
+		lines = append(lines, fmt.Sprintf(
+			"[orange]%s creates its own entity, so %s is not used as a target.[-]",
+			v.spec.ActionID, v.pre.TargetEntity))
+	}
 	if v.spec.IsUpsert() {
 		lines = append(lines,
 			"[orange]Port writes the entity itself and keeps no run record — the entity is the only evidence.[-]")
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 func (v *runFormView) buildFields() {
@@ -90,13 +116,31 @@ func (v *runFormView) buildFields() {
 
 	v.form.AddTextView("── advanced ──", "equivalents of --run-as, --entity and --id", 0, 2, true, false)
 	v.form.AddInputField("run as (email)", "", fieldWidth, nil, func(s string) { v.runAs = s })
-	v.form.AddInputField("target entity", "", fieldWidth, nil, func(s string) { v.entity = s })
+	if v.spec.AcceptsTargetEntity() {
+		// AddInputField installs the changed callback *after* it sets the
+		// text, so the initial value never reaches it. The field below only
+		// mirrors v.entity; the value it mirrors has to be set by hand, or the
+		// run goes out with no target at all.
+		v.entity = v.pre.TargetEntity
+	}
+	v.form.AddInputField("target entity", v.entity, fieldWidth, nil, func(s string) { v.entity = s })
 	v.form.AddInputField("identifier override", "", fieldWidth, nil, func(s string) { v.identifier = s })
+}
+
+// initial is the value a field starts with: whatever a previous attempt left
+// for it, else the action's own default. Without this a retry would rebuild
+// every widget from the schema and throw away the answers it was carrying.
+func (v *runFormView) initial(name, def string) string {
+	if got := v.pre.Values[name]; got != "" {
+		return got
+	}
+	return def
 }
 
 func (v *runFormView) addField(f Field) {
 	label := f.Label
 	name := f.Name
+	start := v.initial(name, f.Default)
 
 	switch f.Kind {
 	case FieldSelect:
@@ -108,7 +152,7 @@ func (v *runFormView) addField(f Field) {
 			options = append([]string{""}, options...)
 		}
 		for i, o := range options {
-			if o == f.Default && f.Default != "" {
+			if o == start && start != "" {
 				selected = i
 			}
 		}
@@ -118,21 +162,21 @@ func (v *runFormView) addField(f Field) {
 		})
 
 	case FieldBool:
-		checked := f.Default == "true"
+		checked := start == "true"
 		v.values[name] = strconv.FormatBool(checked)
 		v.form.AddCheckbox(label, checked, func(b bool) {
 			v.values[name] = strconv.FormatBool(b)
 		})
 
 	case FieldNumber:
-		v.values[name] = f.Default
-		v.form.AddInputField(label, f.Default, 16, tview.InputFieldFloat, func(s string) {
+		v.values[name] = start
+		v.form.AddInputField(label, start, 16, tview.InputFieldFloat, func(s string) {
 			v.values[name] = s
 		})
 
 	case FieldEntityRef:
-		v.values[name] = f.Default
-		input := tview.NewInputField().SetLabel(label).SetText(f.Default).SetFieldWidth(fieldWidth)
+		v.values[name] = start
+		input := tview.NewInputField().SetLabel(label).SetText(start).SetFieldWidth(fieldWidth)
 		input.SetChangedFunc(func(s string) { v.values[name] = s })
 		// Fetched on first keystroke, not up front: a form with several entity
 		// inputs would otherwise fire a request per input before the user has
@@ -143,12 +187,12 @@ func (v *runFormView) addField(f Field) {
 		v.form.AddFormItem(input)
 
 	case FieldJSON:
-		v.values[name] = f.Default
-		v.form.AddTextArea(label, f.Default, 0, 3, 0, func(s string) { v.values[name] = s })
+		v.values[name] = start
+		v.form.AddTextArea(label, start, 0, 3, 0, func(s string) { v.values[name] = s })
 
 	default:
-		v.values[name] = f.Default
-		v.form.AddInputField(label, f.Default, fieldWidth, nil, func(s string) { v.values[name] = s })
+		v.values[name] = start
+		v.form.AddInputField(label, start, fieldWidth, nil, func(s string) { v.values[name] = s })
 	}
 
 	if f.Hint != "" {
@@ -217,18 +261,29 @@ func (v *runFormView) submit() {
 	if v.spec.IsUpsert() {
 		// No run watcher: the id 404s from the moment it is returned, so
 		// polling status or logs would show a permanent error either way.
+		// The prefill carries this attempt's answers and target into the
+		// verification, which is where a retry rebuilds the form from them.
 		v.app.push(newUpsertVerifyView(v.app, v.spec, upsert.Request{
 			ActionID:   v.spec.ActionID,
 			RunID:      result.Run.ID,
 			Identifier: v.identifier,
 			RunProps:   result.Run.Properties,
-		}, v.values))
+		}, runPrefill{TargetEntity: v.entity, Values: v.values}))
 		return
 	}
 	v.app.push(newRunWatchView(v.app, result.Run.ID, v.spec.ActionID))
 }
 
-func (v *runFormView) ID() string                 { return "run/" + v.spec.ActionID }
+// ID includes the target. push reuses the body page whose ID matches, so two
+// forms for the same action aimed at different entities would otherwise share
+// one half-filled form.
+func (v *runFormView) ID() string {
+	if v.entity != "" {
+		return "run/" + v.spec.ActionID + "@" + v.entity
+	}
+	return "run/" + v.spec.ActionID
+}
+
 func (v *runFormView) Title() string              { return "run(" + v.spec.ActionID + ")" }
 func (v *runFormView) Primitive() tview.Primitive { return v.flex }
 func (v *runFormView) Start(context.Context)      {}

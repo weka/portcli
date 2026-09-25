@@ -193,8 +193,19 @@ func (a *App) open(input string) error {
 			return err
 		}
 	}
-	a.push(newTableView(a, res, a.intervalFor(res.Kind())))
+	a.pushResource(res)
 	return nil
+}
+
+// pushResource shows a resource as a table, polled at its kind's interval.
+//
+// open() is the palette's way in, parsing a typed string; this is the way in
+// for code that already holds the resource. Prefer it there: ParseCommand
+// splits on whitespace and reads a field=value token as a filter, so building
+// a command string from an identifier we already have can only lose parts
+// of it.
+func (a *App) pushResource(res Resource) {
+	a.push(newTableView(a, res, a.intervalFor(res.Kind())))
 }
 
 // filterable is implemented by resources that can push a filter to the API

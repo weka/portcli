@@ -274,3 +274,27 @@ func TestBuildPayload(t *testing.T) {
 		}
 	})
 }
+
+// A CREATE action makes its own entity, so aiming a run at an existing one is
+// meaningless; everything else acts on an entity that is already there. The
+// empty case is a v1-shaped trigger, and treating those as day-2 is the safer
+// default — Port tolerates a stray target far better than a dropped one.
+func TestAcceptsTargetEntity(t *testing.T) {
+	for _, tc := range []struct {
+		operation string
+		want      bool
+	}{
+		{"CREATE", false},
+		{"create", false}, // Port's casing is not something to depend on
+		{"DAY-2", true},
+		{"DELETE", true},
+		{"", true},
+	} {
+		t.Run("op="+tc.operation, func(t *testing.T) {
+			spec := FormSpec{Operation: tc.operation}
+			if got := spec.AcceptsTargetEntity(); got != tc.want {
+				t.Errorf("AcceptsTargetEntity() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
