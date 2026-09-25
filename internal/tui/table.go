@@ -294,7 +294,13 @@ func (v *tableView) render() {
 
 	if len(v.visible) > 0 {
 		if restored == 0 {
+			// A first load, or one whose selected row has gone, starts at the
+			// top. Resetting the offset is not redundant: the table is drawn
+			// once while still empty, which leaves tview tracking the end, and
+			// it then shows the *last* page with the cursor invisibly on row
+			// one until some key nudges it.
 			restored = 1
+			v.table.ScrollToBeginning()
 		}
 		v.table.Select(restored, 0)
 	}

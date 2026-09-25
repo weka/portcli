@@ -16,6 +16,29 @@ CLI tool for Port.io self-service actions. Built in Go with Cobra CLI framework.
   package-global mutable state in `cmd`, and reading one from `internal/` makes
   the behaviour depend on which command last parsed flags.
 
+## TUI notes
+- Entry: `tui.Run(ctx, client, opts)`. It owns the screen and returns only once
+  it is restored, so a caller's `os.Exit` can never fire while tcell holds raw
+  mode. It also recovers panics and re-panics *after* `Fini` — tview only
+  recovers on its own goroutine, not one a view spawned.
+- Adding a resource is one file: a type with `Kind`/`ID`/`Title`/`Columns`/
+  `List`/`Ops`, plus an `init` calling `Register`. See `res_blueprints.go`.
+  Implement `dynamicColumns` instead when the columns depend on fetched data.
+- `Resource` is tabular and pure — no tview, no UI decisions — which is why
+  `List` and `Columns` are testable. `View` is anything the stack can show, so
+  logs and describe are not forced into a table shape they do not fit.
+- **Read the rules at the top of `refresh.go` before touching background work.**
+  `QueueUpdateDraw` blocks until the main loop drains it, and the main loop runs
+  the key handlers — so a `stop()` that waited for its goroutine would deadlock
+  with no stack trace. Only the top of the stack polls.
+- The focus guard in `keys.go` is not optional: `SetInputCapture` runs before
+  the focused primitive, so without it `d` typed into a field would trigger
+  Describe and `:` would be untypeable.
+- `tview.Table` binds `h`/`l` to column scrolling with no guard, so both are
+  stolen globally (`stolenKeys`) to free `l` for logs; arrows still scroll.
+  A test asserts no resource binds a key Table already owns.
+- The client secret is never rendered; the client id is masked. There is a test.
+
 ## Verifying a change did not alter CLI behaviour
 `scripts/compare_cli.sh [ref]` builds `ref` (default `HEAD`) in a throwaway git
 worktree and runs both binaries back-to-back over ~20 invocations, diffing
@@ -73,12 +96,34 @@ portcli/
     │   └── parse.go
     ├── upsert/
     │   └── upsert.go              # UPSERT_ENTITY verification (Port keeps no run record)
-    └── bulk/
-        └── bulk.go                # Bounded-concurrency fan-out over entity ids
+    ├── bulk/
+    │   └── bulk.go                # Bounded-concurrency fan-out over entity ids
+    └── tui/                       # tview TUI — entry point: tui.Run(ctx, client, opts)
+        ├── app.go                 #   App shell, widget tree, view stack
+        ├── resource.go            #   Resource interface + kind registry
+        ├── view.go                #   View interface (a view need not be tabular)
+        ├── table.go               #   Generic table over any Resource
+        ├── refresh.go             #   Background polling — read the rules in here first
+        ├── keys.go                #   Key dispatch + the focus guard
+        ├── prompt.go / command.go #   ":" palette and "/" filter; parsing is pure
+        ├── header.go / flash.go   #   Context panel; status line + message history
+        ├── res_*.go               #   One file per resource: blueprints/entities/actions/runs
+        ├── describe.go            #   JSON pane
+        ├── inputs.go / logs.go    #   Action input schema; incremental log tail
+        ├── formspec.go            #   Action schema → form spec (pure, main test target)
+        ├── form.go                #   The run form
+        ├── runwatch.go            #   Status card + live logs
+        ├── upsertverify.go        #   Did the UPSERT_ENTITY action write its entity?
+        ├── editentity.go          #   $EDITOR round trip + property diff
+        ├── confirm.go / help.go   #   Confirmation modal; generated key map
+        └── state.go / style.go    #   ~/.portcli/tui.json; theme
 ```
 
 ## Key Dependencies
 - `github.com/spf13/cobra` — CLI framework
+- `github.com/rivo/tview` — TUI widgets (what k9s uses)
+- `github.com/gdamore/tcell/v2` — terminal backend behind tview
+- `golang.org/x/term` — TTY detection for the bare-invocation path
 
 ## CLI Commands
 | Command | Args | Description |
@@ -93,6 +138,7 @@ portcli/
 | `action run` | `<action-identifier>` | Execute action. Flags: `--input`, `--wait`, `--poll`, `--timeout`, `--run-as`, `--entity`, `--id`, `--json` |
 | `action status` | `<run-id>` | Get action run status |
 | `action logs` | `<run-id>` | Get action run logs |
+| `tui` | | Open the interactive TUI. Also what a bare `portcli` does on a terminal; with either end redirected, bare `portcli` prints help and exits 0. Flags: `--refresh`, `--view` |
 | `action list` | | List action runs as table. Flags: `--entity`/`-e`, `--blueprint`/`-b`, `--action`/`-a` (client-side), `--status`/`-s` (client-side, case-insensitive), `--limit`/`-l` (default 20), `--json` |
 
 ## Port API behaviors worth knowing

@@ -39,6 +39,62 @@ Or create `~/.portcli/config.json`:
 
 ## Usage
 
+### Interactive TUI
+
+```bash
+portcli          # on a terminal, opens the TUI
+portcli tui      # the same, explicitly
+```
+
+A k9s-style interface over the catalog: browse blueprints, entities, actions and
+action runs, run an action from a form built out of its input schema, watch its
+logs stream, and edit or delete entities.
+
+Press `:` for the command palette (with completion), `/` to filter what is on
+screen, and `?` for the full key map. The view you were last in is remembered in
+`~/.portcli/tui.json` and reopened next time; delete that file to start from the
+blueprint list again.
+
+| Key | |
+|---|---|
+| `:` | command palette — `blueprints`, `entities <blueprint>`, `actions`, `runs` |
+| `/` | filter the rows on screen (regex, case-insensitive) |
+| `enter` | drill into the selected row |
+| `d` | describe — the full object as JSON |
+| `l` | logs (on a run) · an entity's runs (on an entity) |
+| `r` | run the selected action |
+| `e` | edit an entity's properties in `$EDITOR` |
+| `ctrl-d` | delete (asks first) |
+| `space` / `ctrl-a` / `ctrl-\` | mark a row / mark all / clear marks — operations apply to marks |
+| `ctrl-r` / `ctrl-w` | refresh now / show wide columns |
+| `esc` | clear the filter, else go back |
+| `q` | back, or quit from the top |
+
+Useful palette commands: `:entities <blueprint> status=Failed` filters
+server-side; `:cols status,owner` overrides the auto-chosen entity columns;
+`:refresh 10s` changes this view's poll interval; `:errors` lists recent
+messages, including background refreshes that failed.
+
+Editing an entity opens its properties as JSON in `$EDITOR` (`$VISUAL` first,
+then `vi`) and sends only the properties that changed. Emptying the file cancels;
+saving something that is not valid JSON reopens the editor with the parse error
+at the top rather than discarding the edit.
+
+Actions that Port carries out itself by writing an entity (`UPSERT_ENTITY`) get a
+verification screen instead of a run watcher, because Port keeps no run record
+for them — see [Actions that create an entity](#actions-that-create-an-entity).
+If the entity does not appear, the screen names the required properties that
+resolved empty and offers to reopen the form with your answers still filled in.
+
+`portcli` with its output redirected (`portcli | cat`, CI) has no terminal to
+draw on and prints this help instead, exiting 0, exactly as it did before the TUI
+existed. `portcli tui` in that situation is an error, since it was asked for by
+name. `portcli --help` and `portcli --version` are unaffected.
+
+Options for `portcli tui`:
+- `--refresh <duration>` — override the per-resource poll intervals
+- `--view <view>` — open this view instead of the remembered one, e.g. `--view "entities my-blueprint"`
+
 ### Blueprint commands
 
 #### List blueprints

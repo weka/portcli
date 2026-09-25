@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/weka/portcli/internal/bulk"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/portfmt"
 )
@@ -236,6 +237,108 @@ func (r *entitiesResource) Ops() []Op {
 				return a.open(fmt.Sprintf("runs %s %s", r.blueprint, rows[0].ID))
 			},
 		},
+		{
+			Rune: 'e',
+			Name: "Edit in $EDITOR",
+			Run:  func(a *App, rows []Row) error { return r.edit(a, rows) },
+		},
+		{
+			Key:       tcell.KeyCtrlD,
+			Name:      "Delete",
+			Dangerous: true,
+			Run:       func(a *App, rows []Row) error { return r.delete(a, rows) },
+		},
+	}
+}
+
+// edit opens the entity's properties in the user's editor and PATCHes only
+// what changed.
+func (r *entitiesResource) edit(a *App, rows []Row) error {
+	if len(rows) != 1 {
+		// Editing several entities at once would mean applying one person's
+		// edits to documents they never saw.
+		return fmt.Errorf("edit works on one entity at a time; %d are marked", len(rows))
+	}
+	id := rows[0].ID
+
+	entity, err := a.client.GetEntity(a.ctx, r.blueprint, id)
+	if err != nil {
+		return fmt.Errorf("cannot fetch entity %s: %w", id, err)
+	}
+	before := entity.Entity.Properties
+	if before == nil {
+		before = map[string]any{}
+	}
+
+	after, saved, err := a.editJSONInEditor(id, before)
+	if err != nil {
+		return err
+	}
+	if !saved {
+		a.flash.show(flashInfo, "edit cancelled")
+		return nil
+	}
+
+	changed := Diff(before, after)
+	if len(changed) == 0 {
+		a.flash.show(flashInfo, "no changes")
+		return nil
+	}
+
+	if err := a.client.UpdateEntityProperties(a.ctx, r.blueprint, id, changed); err != nil {
+		return fmt.Errorf("cannot update %s: %w", id, err)
+	}
+	a.flash.show(flashInfo, "updated %s on %s", DiffSummary(changed), id)
+	if t, ok := a.top().(*tableView); ok {
+		t.refreshNow(a.ctx)
+	}
+	return nil
+}
+
+// delete removes the selected entities. Reached only through the confirmation
+// modal, because Op.Dangerous is set.
+func (r *entitiesResource) delete(a *App, rows []Row) error {
+	ids := make([]string, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+
+	if len(ids) == 1 {
+		if err := a.client.DeleteEntity(a.ctx, r.blueprint, ids[0]); err != nil {
+			return fmt.Errorf("cannot delete %s: %w", ids[0], err)
+		}
+		a.flash.show(flashInfo, "deleted %s", ids[0])
+		r.afterDelete(a)
+		return nil
+	}
+
+	// Same bounded concurrency as the CLI's --all, so a bulk delete from here
+	// puts no more load on Port than one from a script.
+	var failures []string
+	failed := bulk.Apply(a.ctx, ids, bulk.DefaultConcurrency,
+		func(ctx context.Context, id string) error {
+			return a.client.DeleteEntity(ctx, r.blueprint, id)
+		},
+		func(id string, err error) {
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+			}
+		})
+
+	r.afterDelete(a)
+	if failed > 0 {
+		return fmt.Errorf("%d of %d deletes failed:\n%s", failed, len(ids), strings.Join(failures, "\n"))
+	}
+	a.flash.show(flashInfo, "deleted %d entities", len(ids))
+	return nil
+}
+
+// afterDelete clears the marks the operation consumed and refetches, so the
+// table does not keep offering rows that are gone.
+func (r *entitiesResource) afterDelete(a *App) {
+	if t, ok := a.top().(*tableView); ok {
+		t.marked = map[string]bool{}
+		t.refreshNow(a.ctx)
 	}
 }
 
