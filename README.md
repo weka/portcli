@@ -58,7 +58,7 @@ blueprint list again.
 | Key | |
 |---|---|
 | `:` | command palette — `blueprints`, `entities <blueprint>`, `actions`, `runs` |
-| `/` | filter the rows on screen (regex, case-insensitive) |
+| `/` | filter the rows on screen as you type (regex, case-insensitive); `esc` puts the previous filter back |
 | `enter` | drill into the selected row |
 | `d` | describe — the full object as JSON |
 | `l` | logs (on a run) · an entity's runs (on an entity) |

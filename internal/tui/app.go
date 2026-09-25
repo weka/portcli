@@ -37,6 +37,7 @@ type App struct {
 	state  State
 
 	pages   *tview.Pages
+	main    *tview.Flex // the row layout; the bar resizes within it
 	ctxInfo *tview.TextView
 	hints   *tview.TextView
 	logo    *tview.TextView
@@ -46,10 +47,11 @@ type App struct {
 	body    *tview.Pages
 	flash   *flash
 
-	stack   []View
-	ctx     context.Context
-	caches  map[string][]string
-	promptM promptMode
+	stack      []View
+	ctx        context.Context
+	caches     map[string][]string
+	promptM    promptMode
+	promptSeed string // filter in force when "/" opened, for Escape to restore
 }
 
 // Run takes over the terminal until the user quits.
@@ -134,9 +136,12 @@ func newApp(ctx context.Context, c *client.Client, opts Options) *App {
 
 	a.crumbs = tview.NewTextView().SetDynamicColors(true)
 	a.prompt = tview.NewInputField()
-	a.prompt.SetFieldBackgroundColor(tcell.ColorDefault)
-	// The prompt replaces the breadcrumb line rather than floating over the
-	// table, so entering a command does not reflow the layout.
+	a.prompt.SetFieldBackgroundColor(tcell.ColorDefault).
+		SetFieldTextColor(colorValue)
+	// k9s frames the prompt in a box of its own, bordered in the colour of the
+	// mode. That box is two rows taller than the breadcrumb line it replaces,
+	// so the bar is resized around it — see openPrompt.
+	a.prompt.SetBorder(true)
 	a.bar = tview.NewPages().
 		AddPage("crumbs", a.crumbs, true, true).
 		AddPage("prompt", a.prompt, true, false)
@@ -144,13 +149,13 @@ func newApp(ctx context.Context, c *client.Client, opts Options) *App {
 	a.body = tview.NewPages()
 	a.flash = newFlash(a.app)
 
-	main := tview.NewFlex().SetDirection(tview.FlexRow).
+	a.main = tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(header, 7, 0, false).
-		AddItem(a.bar, 1, 0, false).
+		AddItem(a.bar, crumbHeight, 0, false).
 		AddItem(a.body, 0, 1, true).
 		AddItem(a.flash.view, 1, 0, false)
 
-	a.pages = tview.NewPages().AddPage("main", main, true, true)
+	a.pages = tview.NewPages().AddPage("main", a.main, true, true)
 	a.app.SetRoot(a.pages, true)
 	a.app.SetInputCapture(a.globalCapture)
 	a.configurePrompt()
@@ -292,15 +297,17 @@ func (a *App) drawCrumbs() {
 		a.crumbs.SetText("")
 		return
 	}
+	// k9s sets each crumb in a filled chip — black on aqua, the one you are in
+	// on orange — rather than distinguishing them by text colour alone.
 	var parts []string
 	for i, v := range a.stack {
+		fill := tagAccent
 		if i == len(a.stack)-1 {
-			parts = append(parts, "["+tagAccent+"::b]"+v.Title()+"[-::-]")
-			continue
+			fill = tagLabel
 		}
-		parts = append(parts, "["+tagDim+"]"+v.Title()+"[-]")
+		parts = append(parts, fmt.Sprintf("[black:%s:b] <%s> [-:-:-]", fill, v.Title()))
 	}
-	a.crumbs.SetText(strings.Join(parts, "[gray] › [-]"))
+	a.crumbs.SetText(strings.Join(parts, " "))
 }
 
 func (a *App) drawHeader() {
@@ -356,8 +363,8 @@ func (a *App) showError(err error) {
 // fatal replaces the UI. Used when nothing further can work — broken
 // credentials, or no view at all — so a flash would be dishonest.
 func (a *App) fatal(err error) {
-	text := fmt.Sprintf("[indianred::b]portcli cannot continue[-::-]\n\n%v\n\n[dimgray]Base URL: %s\nAuth:     %s\n\nPress q to quit.",
-		err, a.opts.Config.BaseURL, authSource())
+	text := fmt.Sprintf("[%s::b]portcli cannot continue[-::-]\n\n%v\n\n[%s]Base URL: %s\nAuth:     %s\n\nPress q to quit.",
+		tagError, err, tagDim, a.opts.Config.BaseURL, authSource())
 	view := tview.NewTextView().SetDynamicColors(true).SetText(text)
 	view.SetDoneFunc(func(tcell.Key) { a.app.Stop() })
 	a.pages.AddPage("fatal", view, true, true)

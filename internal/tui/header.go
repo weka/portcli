@@ -112,8 +112,10 @@ func hint(key, desc string, width int) string {
 	if pad < 0 {
 		pad = 0
 	}
-	return fmt.Sprintf("[%s]<[%s]%s[%s]>[%s] %s%s",
-		tagDim, tagKey, key, tagDim, tagHint, desc, strings.Repeat(" ", pad))
+	// k9s draws the angle brackets in the key's own colour rather than dimming
+	// them, which makes each chord read as one token.
+	return fmt.Sprintf("[%s::b]<%s>[%s::-] %s%s",
+		tagKey, key, tagHint, desc, strings.Repeat(" ", pad))
 }
 
 // hintLines lays the key legend out in columns, filling top to bottom like

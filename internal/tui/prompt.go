@@ -20,8 +20,30 @@ const (
 	promptFilter                    // "/" — narrow the current table
 )
 
+// Heights of the bar row: the breadcrumb trail is one line, the prompt is one
+// line inside a border.
+const (
+	crumbHeight  = 1
+	promptHeight = 3
+)
+
 // configurePrompt wires the one InputField that serves both ":" and "/".
 func (a *App) configurePrompt() {
+	// Styles first, and not for tidiness: SetAutocompleteFunc runs the callback
+	// straight away, and the completion list is built with whatever styles are
+	// set at the moment it is first created — a later SetAutocompleteStyles is
+	// silently ignored for the life of that list.
+	//
+	// They are worth setting because tview draws the list outside the field's
+	// rect and clips nothing, so it lands on top of the table. A filled slate
+	// block reads as a panel floating over it; tview's default read as a
+	// bright bar across a border, and a background matching the screen's would
+	// leave the entries looking embedded in the border they cover.
+	a.prompt.SetAutocompleteStyles(
+		colorPanel,
+		tcell.StyleDefault.Background(colorPanel).Foreground(colorKey),
+		tcell.StyleDefault.Background(colorKey).Foreground(tcell.ColorBlack).Bold(true),
+	)
 	a.prompt.SetAutocompleteFunc(func(current string) []string {
 		if a.promptM != promptCommand {
 			return nil
@@ -29,33 +51,83 @@ func (a *App) configurePrompt() {
 		return Candidates(current, a.caches)
 	})
 
+	// Filtering is live, as it is in k9s: the table narrows and its title
+	// count moves as you type, so a pattern is judged by what it leaves on
+	// screen rather than by guessing and pressing Enter. A half-typed pattern
+	// is often not a valid regex — "a(" — so a compile failure just leaves the
+	// last good filter in place until the next keystroke; Enter is what
+	// reports it.
+	a.prompt.SetChangedFunc(func(text string) {
+		if a.promptM != promptFilter {
+			return
+		}
+		if f, ok := a.top().(filterView); ok {
+			_ = f.setFilter(text)
+		}
+	})
+
 	a.prompt.SetDoneFunc(func(key tcell.Key) {
 		switch key {
 		case tcell.KeyEnter:
 			a.submitPrompt(a.prompt.GetText())
 		case tcell.KeyEscape:
-			a.closePrompt()
+			a.cancelPrompt()
 		}
 	})
 }
 
 func (a *App) openPrompt(mode promptMode) {
 	a.promptM = mode
-	label, seed := "> ", ""
+	// The border colour is the mode: aqua asks for a command, green narrows
+	// what is already on screen. It is the same green the active filter wears
+	// in the table's title.
+	label, seed, color := "> ", "", colorCommand
 	if mode == promptFilter {
-		label = "/"
+		label, color = "/", colorFilter
 		// Seed with the active filter so "/" is an edit, not a retype.
 		if t, ok := a.table(); ok {
 			seed = t.filterIn
 		}
 	}
+	a.promptSeed = seed
+	a.prompt.SetBorderColor(color)
+	a.prompt.SetLabelColor(color)
+	// SetText fires the change handler, which reads promptM — already set
+	// above, so a seeded filter re-applies as a filter rather than being
+	// dispatched by whatever mode the last prompt was in.
 	a.prompt.SetLabel(label).SetText(seed)
-	a.bar.SwitchToPage("prompt")
+
+	a.showBar(true)
 	a.app.SetFocus(a.prompt)
 }
 
+// showBar puts either the breadcrumb trail or the prompt on the bar row. They
+// differ in height as well as in content — the prompt is boxed — so one call
+// sets both, rather than leaving a page switch and a resize to be kept in step
+// at each call site.
+func (a *App) showBar(prompting bool) {
+	page, height := "crumbs", crumbHeight
+	if prompting {
+		page, height = "prompt", promptHeight
+	}
+	a.main.ResizeItem(a.bar, height, 0)
+	a.bar.SwitchToPage(page)
+}
+
+// cancelPrompt abandons the prompt. Live filtering means Escape has something
+// to undo: whatever was typed is already applied, so the filter in force when
+// the prompt opened is put back.
+func (a *App) cancelPrompt() {
+	if a.promptM == promptFilter {
+		if f, ok := a.top().(filterView); ok {
+			_ = f.setFilter(a.promptSeed)
+		}
+	}
+	a.closePrompt()
+}
+
 func (a *App) closePrompt() {
-	a.bar.SwitchToPage("crumbs")
+	a.showBar(false)
 	if v := a.top(); v != nil {
 		a.app.SetFocus(v.Primitive())
 	}

@@ -361,18 +361,21 @@ func (v *tableView) isInert(r Row) bool {
 	return false
 }
 
-// setTitle names the resource on the border, with its live counts, the way
-// k9s labels a table: pods(all)[31].
+// setTitle names the resource on the border, with its live counts and any
+// active filter, in the shape k9s labels a table: pods(all)[31] </po>.
+//
+// Each piece gets its own colour — the narrowing argument, the row count, the
+// filter — so the title stays one glance rather than a sentence to read.
 func (v *tableView) setTitle() {
-	title := fmt.Sprintf(" [%s::b]%s", tagValue, v.res.Kind())
+	title := fmt.Sprintf(" [%s::b]%s", tagAccent, v.res.Kind())
 	if arg := titleArg(v.res); arg != "" {
-		title += fmt.Sprintf("[%s::-](%s)", tagAccent, arg)
+		title += fmt.Sprintf("[%s::-]([%s::b]%s[%s::-])", tagAccent, tagHighlight, arg, tagAccent)
 	}
-	title += fmt.Sprintf("[%s::b][%d]", tagValue, len(v.visible))
+	title += fmt.Sprintf("[%s::-][[%s::b]%d[%s::-]] ", tagAccent, tagCounter, len(v.visible), tagAccent)
 	if v.filterIn != "" {
-		title += fmt.Sprintf("[%s::-] /%s/", tagAccent, v.filterIn)
+		title += fmt.Sprintf("<[%s::b]/%s[%s::-]> ", tagFilter, v.filterIn, tagAccent)
 	}
-	v.table.SetTitle(title + " ")
+	v.table.SetTitle(title)
 }
 
 // titleArg is whatever narrows a resource — the blueprint, the entity —

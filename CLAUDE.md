@@ -31,6 +31,25 @@ CLI tool for Port.io self-service actions. Built in Go with Cobra CLI framework.
   `QueueUpdateDraw` blocks until the main loop drains it, and the main loop runs
   the key handlers — so a `stop()` that waited for its goroutine would deadlock
   with no stack trace. Only the top of the stack polls.
+- The palette in `style.go` is k9s's default skin. The `tag*` markup names are
+  derived from the `color*` constants through `Color.Name`, which round-trips
+  via the same `tcell.GetColor` tview's tag parser calls — so a colour is
+  declared once, not twice.
+- **`SetAutocompleteStyles` must be called before `SetAutocompleteFunc`.**
+  tview runs the callback the instant you install it and builds the completion
+  list with whatever styles exist at that moment; a later call is silently
+  ignored for the life of that list. That list is also drawn outside the
+  prompt's rect with no clipping, so it overlaps the table — it is styled as a
+  filled panel so that reads as a popup rather than a corrupted row. While it
+  is open it also eats the first Enter to accept a completion, so `:runs` then
+  Enter submits on the second press.
+- `/` filters live, on every keystroke, which is what gives Escape something to
+  undo: it restores the filter in force when the prompt opened, not `""`.
+  A pattern that fails to compile mid-typing is ignored rather than flashed —
+  `a(` is a half-typed `a(b)`, not a mistake — and Enter is what reports it.
+- The prompt is a bordered box, so the bar row grows from `crumbHeight` to
+  `promptHeight` while it is open, via `a.main.ResizeItem`. Both branches of
+  `openPrompt`/`closePrompt` have to stay paired or the layout keeps the gap.
 - The focus guard in `keys.go` is not optional: `SetInputCapture` runs before
   the focused primitive, so without it `d` typed into a field would trigger
   Describe and `:` would be untypeable.

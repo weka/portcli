@@ -27,11 +27,11 @@ func (l flashLevel) ttl() time.Duration {
 func (l flashLevel) tag() string {
 	switch l {
 	case flashWarn:
-		return "[orange]"
+		return "[" + tagWarn + "]"
 	case flashError:
-		return "[indianred]"
+		return "[" + tagError + "]"
 	default:
-		return "[palegreen]"
+		return "[" + tagInfo + "]"
 	}
 }
 

@@ -17,34 +17,56 @@ func init() {
 	tview.Borders.BottomRightFocus = tview.Borders.BottomRight
 }
 
-// The palette follows k9s: amber for the labels that name things, cyan for
-// keys and identifiers, and a solid cyan bar for the selected row.
+// The palette is the k9s default skin, with each constant named after the
+// part of the frame k9s applies it to, so the two read the same side by side.
 const (
-	colorLabel    = tcell.ColorOrange      // "Base URL:", "Auth:" — the left column
-	colorValue    = tcell.ColorWhite       // what those labels point at
-	colorKey      = tcell.ColorDeepSkyBlue // <d>, <ctrl-r> in the legend
-	colorHint     = tcell.ColorSilver      // what a key does
-	colorTitle    = tcell.ColorWhite       // column headings, box titles
-	colorAccent   = tcell.ColorAqua        // identifiers, the live part of a title
-	colorBorder   = tcell.ColorGray
+	colorLabel    = tcell.ColorOrange     // info: "Base URL:", "Auth:"
+	colorValue    = tcell.ColorWhite      // info: what those labels point at
+	colorKey      = tcell.ColorDodgerBlue // menu: <d>, <ctrl-r>
+	colorHint     = tcell.ColorSilver     // menu: what a key does
+	colorTitle    = tcell.ColorWhite      // table column headings
+	colorAccent   = tcell.ColorAqua       // frame titles, identifiers
+	colorBorder   = tcell.ColorDodgerBlue // every box in the frame
 	colorLogo     = tcell.ColorOrange
-	colorSelected = tcell.ColorAqua // selection bar; text on it is black
+	colorSelected = tcell.ColorAqua // cursor bar; text on it is black
 	colorDimmed   = tcell.ColorGray // rows in a terminal state
+
+	// Pieces of a frame title. k9s gives the row count and the active filter
+	// their own colours so both read at a glance out of the aqua title.
+	colorCounter   = tcell.ColorPapayaWhip
+	colorFilter    = tcell.ColorSeaGreen
+	colorHighlight = tcell.ColorFuchsia
+
+	// The prompt's border says which prompt it is. k9s colours ":" and "/"
+	// differently so the mode is visible without reading the label — and
+	// filter mode borrows the same green the filter wears in the title.
+	colorCommand = tcell.ColorAqua
+	// Fill for the completion list, which floats over the table rather than
+	// displacing it, so it has to be visibly not the background.
+	colorPanel = tcell.ColorDarkSlateGray
 
 	colorInfo  = tcell.ColorPaleGreen
 	colorWarn  = tcell.ColorOrange
-	colorError = tcell.ColorIndianRed
+	colorError = tcell.ColorOrangeRed
 )
 
 // Markup tag names for the same colours, for the text views that take tags
-// rather than styles.
-const (
-	tagLabel  = "orange"
-	tagValue  = "white"
-	tagKey    = "deepskyblue"
-	tagHint   = "silver"
-	tagAccent = "aqua"
-	tagDim    = "gray"
+// rather than styles. Derived rather than restated: Color.Name round-trips
+// through tcell.GetColor, which is the lookup tview's tag parser performs, so
+// a tag cannot drift out of step with the constant it names.
+var (
+	tagLabel     = colorLabel.Name()
+	tagValue     = colorValue.Name()
+	tagKey       = colorKey.Name()
+	tagHint      = colorHint.Name()
+	tagAccent    = colorAccent.Name()
+	tagDim       = colorDimmed.Name()
+	tagCounter   = colorCounter.Name()
+	tagFilter    = colorFilter.Name()
+	tagHighlight = colorHighlight.Name()
+	tagInfo      = colorInfo.Name()
+	tagWarn      = colorWarn.Name()
+	tagError     = colorError.Name()
 )
 
 // logoLines is the banner in the top right, in the spirit of the k9s one.
