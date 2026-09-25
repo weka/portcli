@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +44,7 @@ func TestGetActionDecodesDynamicEnum(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	action, err := newTestClient(ts).GetAction("deploy")
+	action, err := newTestClient(ts).GetAction(context.Background(), "deploy")
 	if err != nil {
 		t.Fatalf("GetAction returned %v; a jq-driven enum must not fail the whole action", err)
 	}
@@ -133,7 +134,7 @@ func TestListActionsDecodesFullObjects(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	actions, err := newTestClient(ts).ListActions()
+	actions, err := newTestClient(ts).ListActions(context.Background())
 	if err != nil {
 		t.Fatalf("ListActions: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestGetRunLogsFromBuildsOffsetQuery(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			logs, err := newTestClient(ts).GetRunLogsFrom("r_1", tc.offset, tc.limit)
+			logs, err := newTestClient(ts).GetRunLogsFrom(context.Background(), "r_1", tc.offset, tc.limit)
 			if err != nil {
 				t.Fatalf("GetRunLogsFrom: %v", err)
 			}

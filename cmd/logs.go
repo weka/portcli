@@ -24,7 +24,7 @@ Examples:
 		}
 
 		c := client.New(cfg)
-		logs, err := c.GetRunLogs(args[0])
+		logs, err := c.GetRunLogs(cmd.Context(), args[0])
 		if err != nil {
 			return fmt.Errorf("failed to get logs: %w", err)
 		}

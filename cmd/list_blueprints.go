@@ -30,6 +30,7 @@ func init() {
 }
 
 func listBlueprints(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	var re *regexp.Regexp
 	if filterRegex != "" {
 		var err error
@@ -45,7 +46,7 @@ func listBlueprints(cmd *cobra.Command, args []string) error {
 	}
 
 	c := client.New(cfg)
-	blueprints, err := c.ListBlueprints()
+	blueprints, err := c.ListBlueprints(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list blueprints: %w", err)
 	}

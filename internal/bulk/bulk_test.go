@@ -1,6 +1,7 @@
 package bulk
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync/atomic"
@@ -11,8 +12,8 @@ func TestApplyRunsEveryIDAndCountsFailures(t *testing.T) {
 	ids := []string{"a", "b", "c", "d", "e"}
 
 	var seen []string
-	failed := Apply(ids, 2,
-		func(id string) error {
+	failed := Apply(context.Background(), ids, 2,
+		func(_ context.Context, id string) error {
 			if id == "b" || id == "d" {
 				return fmt.Errorf("boom %s", id)
 			}
@@ -41,7 +42,7 @@ func TestApplyRespectsConcurrencyLimit(t *testing.T) {
 		ids[i] = fmt.Sprintf("id-%d", i)
 	}
 
-	Apply(ids, limit, func(string) error {
+	Apply(context.Background(), ids, limit, func(context.Context, string) error {
 		n := inFlight.Add(1)
 		for {
 			old := peak.Load()
@@ -61,7 +62,7 @@ func TestApplyRespectsConcurrencyLimit(t *testing.T) {
 func TestApplyEdgeCases(t *testing.T) {
 	t.Run("no ids does nothing", func(t *testing.T) {
 		called := false
-		if failed := Apply(nil, 5, func(string) error { called = true; return nil }, nil); failed != 0 {
+		if failed := Apply(context.Background(), nil, 5, func(context.Context, string) error { called = true; return nil }, nil); failed != 0 {
 			t.Errorf("failed = %d, want 0", failed)
 		}
 		if called {
@@ -71,7 +72,7 @@ func TestApplyEdgeCases(t *testing.T) {
 
 	t.Run("nil onResult is allowed", func(t *testing.T) {
 		var ran atomic.Int32
-		Apply([]string{"a", "b"}, 2, func(string) error { ran.Add(1); return nil }, nil)
+		Apply(context.Background(), []string{"a", "b"}, 2, func(context.Context, string) error { ran.Add(1); return nil }, nil)
 		if ran.Load() != 2 {
 			t.Errorf("fn ran %d times, want 2", ran.Load())
 		}
@@ -81,14 +82,14 @@ func TestApplyEdgeCases(t *testing.T) {
 	// unbuffered and deadlock every worker.
 	t.Run("zero concurrency is clamped, not deadlocked", func(t *testing.T) {
 		var ran atomic.Int32
-		Apply([]string{"a", "b", "c"}, 0, func(string) error { ran.Add(1); return nil }, nil)
+		Apply(context.Background(), []string{"a", "b", "c"}, 0, func(context.Context, string) error { ran.Add(1); return nil }, nil)
 		if ran.Load() != 3 {
 			t.Errorf("fn ran %d times, want 3", ran.Load())
 		}
 	})
 
 	t.Run("all failing", func(t *testing.T) {
-		failed := Apply([]string{"a", "b"}, 2, func(string) error { return fmt.Errorf("no") }, nil)
+		failed := Apply(context.Background(), []string{"a", "b"}, 2, func(context.Context, string) error { return fmt.Errorf("no") }, nil)
 		if failed != 2 {
 			t.Errorf("failed = %d, want 2", failed)
 		}

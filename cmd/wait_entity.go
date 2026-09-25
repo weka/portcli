@@ -46,6 +46,7 @@ func init() {
 }
 
 func waitEntity(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	blueprint, identifier := args[0], args[1]
 	if waitFor == "" {
 		return fmt.Errorf("--for is required")
@@ -73,7 +74,7 @@ func waitEntity(cmd *cobra.Command, args []string) error {
 		blueprint, identifier, waitProperty, waitFor, waitTimeout, waitInterval)
 
 	val := ""
-	_, err = c.PollEntity(blueprint, identifier,
+	_, err = c.PollEntity(ctx, blueprint, identifier,
 		time.Duration(waitTimeout)*time.Second, time.Duration(waitInterval)*time.Second,
 		func(entity *client.Entity, fetchErr error) (bool, error) {
 			val = ""

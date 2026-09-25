@@ -6,6 +6,7 @@
 package upsert
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -46,12 +47,12 @@ func InputRef(tmpl string) (string, bool) {
 // returns (nil, nil) for any other action type, or when the target entity
 // cannot be determined — in those cases there is nothing to check and the
 // normal run-status flow applies.
-func Verify(c *client.Client, req Request) (*client.Entity, error) {
+func Verify(ctx context.Context, c *client.Client, req Request) (*client.Entity, error) {
 	// Report a failed lookup rather than reading it as "not an upsert".
 	// Whether verification applies is exactly what this call answers, so
 	// treating an error as "nothing to check" turns any transient failure into
 	// a silent pass — the phantom success this package exists to prevent.
-	action, err := c.GetAction(req.ActionID)
+	action, err := c.GetAction(ctx, req.ActionID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot tell whether %s is an UPSERT_ENTITY action, so its result is unverified: %w", req.ActionID, err)
 	}
@@ -68,14 +69,14 @@ func Verify(c *client.Client, req Request) (*client.Entity, error) {
 	// The upsert is not synchronous with the response — it lands a few hundred
 	// milliseconds later — so allow a short grace period before concluding it
 	// never happened.
-	entity, err := c.PollEntity(blueprint, target, 10*time.Second, 250*time.Millisecond,
+	entity, err := c.PollEntity(ctx, blueprint, target, 10*time.Second, 250*time.Millisecond,
 		func(_ *client.Entity, fetchErr error) (bool, error) { return fetchErr == nil, nil })
 	if err == nil {
 		return entity, nil
 	}
 
 	var detail string
-	if unresolved := UnresolvedRequired(c, action, req.RunProps); len(unresolved) > 0 {
+	if unresolved := UnresolvedRequired(ctx, c, action, req.RunProps); len(unresolved) > 0 {
 		detail = fmt.Sprintf("\n  required %s properties that did not resolve:\n    %s",
 			blueprint, strings.Join(unresolved, "\n    "))
 	}
@@ -105,8 +106,8 @@ func Target(action *client.ActionDetail, runProps map[string]any, override strin
 // came out empty. A hidden input defaulted from a jqQuery such as .user.email
 // is the usual cause: it resolves to nothing when the action runs on client
 // credentials rather than as a real user, and the upsert is then rejected.
-func UnresolvedRequired(c *client.Client, action *client.ActionDetail, runProps map[string]any) []string {
-	bp, err := c.GetBlueprint(action.InvocationMethod.BlueprintIdentifier)
+func UnresolvedRequired(ctx context.Context, c *client.Client, action *client.ActionDetail, runProps map[string]any) []string {
+	bp, err := c.GetBlueprint(ctx, action.InvocationMethod.BlueprintIdentifier)
 	if err != nil {
 		return nil
 	}

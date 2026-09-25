@@ -47,6 +47,7 @@ func init() {
 }
 
 func listRuns(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -54,7 +55,7 @@ func listRuns(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 
-	runs, err := c.ListActionRuns(listRunsEntity, listRunsBlueprint, listRunsLimit)
+	runs, err := c.ListActionRuns(ctx, listRunsEntity, listRunsBlueprint, listRunsLimit)
 	if err != nil {
 		return fmt.Errorf("failed to list runs: %w", err)
 	}

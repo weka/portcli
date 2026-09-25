@@ -130,6 +130,29 @@ portcli/
   objects**, trigger inputs and invocation mapping included — so `ListActions`
   answers in one call what would otherwise be a `GetAction` per action. Pass
   `version` explicitly; the trigger shape differs between versions.
+- **Access tokens expire and nothing announces it.** `POST /v1/auth/access_token`
+  returns a bearer token (`expiresIn` ≈ 1.7h) with no expiry field on the token
+  itself and no refresh endpoint. A one-shot CLI run never outlives one; a TUI
+  session does. `doRequest` treats a single 401 as an aged-out token,
+  re-authenticates once and replays the request; a second 401 is reported as a
+  credentials error. `client.IsUnauthorized` recognises both.
+
+## Concurrency and cancellation
+- The client is safe for concurrent use. `token` is guarded by `authMu`, held
+  across the authentication round-trip so a burst of concurrent requests costs
+  one authentication rather than one each.
+- Every exported client method takes a `context.Context` as its first argument.
+  It comes from `cmd.Context()`, which `Execute` wires to a
+  `signal.NotifyContext` — so `^C` aborts an in-flight request instead of
+  killing the process mid-PATCH, and the process exits 130.
+- `PollEntity` and `WaitForRun` `select` on `ctx.Done()` rather than
+  `time.Sleep`, so an interrupt lands immediately instead of one poll interval
+  later. They are still blocking loops that report nothing until they finish,
+  which suits `action run --wait` and `entity wait`; a UI should poll with its
+  own ticker over the single-shot `GetEntity`/`GetActionRun` instead.
+- When replaying a request after re-authentication, the body is marshalled once
+  and a fresh reader built per attempt. Reusing the reader sends an empty body
+  the second time, which the API accepts — a PATCH would silently write nothing.
 
 ## Configuration
 - Env vars: `PORT_CLIENT_ID`, `PORT_CLIENT_SECRET`, `PORT_BASE_URL`

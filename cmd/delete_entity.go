@@ -2,15 +2,14 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/weka/portcli/internal/bulk"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/weka/portcli/internal/portfmt"
 )
 
 var (
@@ -58,6 +57,7 @@ func confirmPrompt(message string) bool {
 }
 
 func deleteEntity(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	blueprint := args[0]
 
 	if deleteFilter != "" && !deleteAll {
@@ -71,7 +71,7 @@ func deleteEntity(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	if deleteAll {
-		return deleteAllEntities(c, blueprint)
+		return deleteAllEntities(ctx, c, blueprint)
 	}
 
 	identifier := args[1]
@@ -83,38 +83,21 @@ func deleteEntity(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := c.DeleteEntity(blueprint, identifier); err != nil {
+	if err := c.DeleteEntity(ctx, blueprint, identifier); err != nil {
 		return fmt.Errorf("failed to delete entity %s: %w", identifier, err)
 	}
 	fmt.Printf("Deleted entity %s from blueprint %s\n", identifier, blueprint)
 	return nil
 }
 
-func deleteAllEntities(c *client.Client, blueprint string) error {
-	var entities []client.EntitySummary
-	var err error
-
-	if deleteFilter != "" {
-		field, value, ferr := portfmt.ParseFilter(deleteFilter)
-		if ferr != nil {
-			return ferr
-		}
-		entities, err = c.SearchEntitiesWithFilter(blueprint, field, value)
-	} else {
-		entities, err = c.SearchEntities(blueprint)
-	}
+func deleteAllEntities(ctx context.Context, c *client.Client, blueprint string) error {
+	entities, filterDesc, err := resolveEntities(ctx, c, blueprint, deleteFilter)
 	if err != nil {
-		return fmt.Errorf("failed to list entities: %w", err)
+		return err
 	}
-
 	if len(entities) == 0 {
 		fmt.Println("No entities found")
 		return nil
-	}
-
-	filterDesc := ""
-	if deleteFilter != "" {
-		filterDesc = fmt.Sprintf(" matching filter %q", deleteFilter)
 	}
 
 	if !deleteConfirm {
@@ -126,24 +109,8 @@ func deleteAllEntities(c *client.Client, blueprint string) error {
 
 	fmt.Printf("Deleting %d entities...\n", len(entities))
 
-	ids := make([]string, len(entities))
-	for i, entity := range entities {
-		ids[i] = entity.Identifier
-	}
-
-	f := bulk.Apply(ids, bulk.DefaultConcurrency,
-		func(id string) error { return c.DeleteEntity(blueprint, id) },
-		func(id string, err error) {
-			if err != nil {
-				fmt.Printf("  FAILED %s: %v\n", id, err)
-				return
-			}
-			fmt.Printf("  Deleted %s\n", id)
+	return runBulk(ctx, entityIDs(entities), "Deleted", "deletes",
+		func(ctx context.Context, id string) error {
+			return c.DeleteEntity(ctx, blueprint, id)
 		})
-
-	if f > 0 {
-		return fmt.Errorf("%d of %d deletes failed", f, len(entities))
-	}
-	fmt.Printf("All %d entities deleted\n", len(entities))
-	return nil
 }

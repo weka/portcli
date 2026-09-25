@@ -25,6 +25,7 @@ func init() {
 }
 
 func getBlueprint(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	identifier := args[0]
 
 	cfg, err := config.Load()
@@ -33,7 +34,7 @@ func getBlueprint(cmd *cobra.Command, args []string) error {
 	}
 
 	c := client.New(cfg)
-	bp, err := c.GetBlueprint(identifier)
+	bp, err := c.GetBlueprint(ctx, identifier)
 	if err != nil {
 		return fmt.Errorf("failed to get blueprint: %w", err)
 	}

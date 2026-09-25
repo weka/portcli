@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/weka/portcli/internal/config"
@@ -19,8 +21,14 @@ type Client struct {
 	baseURL      string
 	clientID     string
 	clientSecret string
-	token        string
 	http         *http.Client
+
+	// authMu guards token. It is held across the authentication round-trip on
+	// purpose: a burst of concurrent requests — what a TUI produces on every
+	// view switch — should cost one authentication, not one per request.
+	// Readers hold it only long enough to copy a string.
+	authMu sync.Mutex
+	token  string
 }
 
 func New(cfg *config.Config) *Client {
@@ -32,70 +40,129 @@ func New(cfg *config.Config) *Client {
 	}
 }
 
-func (c *Client) authenticate() error {
+// bearer returns a usable token, authenticating on first use. Any existing
+// token will do, which is what passing an empty stale token asks for.
+func (c *Client) bearer(ctx context.Context) (string, error) {
+	return c.tokenOtherThan(ctx, "")
+}
+
+// refresh replaces a token the API rejected.
+func (c *Client) refresh(ctx context.Context, rejected string) (string, error) {
+	return c.tokenOtherThan(ctx, rejected)
+}
+
+// tokenOtherThan returns the cached token unless it is stale, authenticating
+// otherwise. Comparing against the token the caller actually sent is what
+// makes N simultaneous 401s cost one authentication between them: whichever
+// goroutine gets the lock first replaces the token, and the rest see a value
+// that is no longer the one they were rejected for.
+func (c *Client) tokenOtherThan(ctx context.Context, stale string) (string, error) {
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+	if c.token != "" && c.token != stale {
+		return c.token, nil
+	}
+	return c.authLocked(ctx)
+}
+
+// authLocked performs the client-credentials exchange. The caller holds authMu.
+func (c *Client) authLocked(ctx context.Context) (string, error) {
 	body, _ := json.Marshal(map[string]string{
 		"clientId":     c.clientID,
 		"clientSecret": c.clientSecret,
 	})
-	resp, err := c.http.Post(c.baseURL+"/v1/auth/access_token", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/v1/auth/access_token", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("auth request failed: %w", err)
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("auth request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("auth failed (status %d): %s", resp.StatusCode, data)
+		return "", fmt.Errorf("auth failed (status %d): %s", resp.StatusCode, data)
 	}
 
 	var result struct {
 		AccessToken string `json:"accessToken"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to parse auth response: %w", err)
+		return "", fmt.Errorf("failed to parse auth response: %w", err)
 	}
 	c.token = result.AccessToken
-	return nil
+	return c.token, nil
 }
 
-func (c *Client) doRequest(method, path string, body any) ([]byte, error) {
-	if c.token == "" {
-		if err := c.authenticate(); err != nil {
-			return nil, err
-		}
-	}
-
-	var reqBody io.Reader
+func (c *Client) doRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
+	// Marshal once. The request is replayed if the token turns out to be
+	// expired, and an io.Reader cannot be rewound — reusing one would send an
+	// empty body on the second attempt, which the API accepts.
+	var payload []byte
 	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
+		var err error
+		if payload, err = json.Marshal(body); err != nil {
 			return nil, err
 		}
-		reqBody = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, reqBody)
+	token, err := c.bearer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	// Port access tokens expire (~1.7h) and nothing announces it. A one-shot
+	// CLI run never notices; a session left open does. Treat one 401 as "the
+	// token aged out", swap it and replay. A second 401 means the credentials
+	// themselves are wrong, and is reported as-is.
+	for attempt := 0; ; attempt++ {
+		data, status, err := c.send(ctx, method, path, payload, token)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusUnauthorized && attempt == 0 {
+			if token, err = c.refresh(ctx, token); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if status < 200 || status >= 300 {
+			return nil, fmt.Errorf("API error (status %d): %s", status, data)
+		}
+		return data, nil
+	}
+}
+
+// send performs one attempt, returning the body and status rather than an
+// error for a non-2xx, so doRequest can decide whether to retry.
+func (c *Client) send(ctx context.Context, method, path string, payload []byte, token string) ([]byte, int, error) {
+	var reqBody io.Reader
+	if payload != nil {
+		reqBody = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, respBody)
-	}
-	return respBody, nil
+	return data, resp.StatusCode, nil
 }
 
 // RunSummary represents a single run entry returned by the list runs endpoint.
@@ -114,7 +181,7 @@ type RunSummary struct {
 }
 
 // ListActionRuns fetches action runs, optionally filtered by entity, blueprint, and limit.
-func (c *Client) ListActionRuns(entity, blueprint string, limit int) ([]RunSummary, error) {
+func (c *Client) ListActionRuns(ctx context.Context, entity, blueprint string, limit int) ([]RunSummary, error) {
 	params := url.Values{}
 	if entity != "" {
 		params.Set("entity", entity)
@@ -130,7 +197,7 @@ func (c *Client) ListActionRuns(entity, blueprint string, limit int) ([]RunSumma
 		path += "?" + params.Encode()
 	}
 
-	data, err := c.doRequest("GET", path, nil)
+	data, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +255,11 @@ type ResolvedLink struct {
 
 // ResolveLinks fetches every entity a run links to. Failures ride along per
 // link rather than aborting, so one unreadable link does not hide the others.
-func (c *Client) ResolveLinks(run *ActionRun) []ResolvedLink {
+func (c *Client) ResolveLinks(ctx context.Context, run *ActionRun) []ResolvedLink {
 	links := run.GetLinkedEntities()
 	out := make([]ResolvedLink, 0, len(links))
 	for _, link := range links {
-		entity, err := c.GetEntity(link.Blueprint, link.Identifier)
+		entity, err := c.GetEntity(ctx, link.Blueprint, link.Identifier)
 		out = append(out, ResolvedLink{Link: link, Entity: entity, Err: err})
 	}
 	return out
@@ -207,14 +274,14 @@ type RunLog struct {
 }
 
 // GetRunLogs fetches logs for an action run.
-func (c *Client) GetRunLogs(runID string) ([]RunLog, error) {
-	return c.GetRunLogsFrom(runID, 0, 0)
+func (c *Client) GetRunLogs(ctx context.Context, runID string) ([]RunLog, error) {
+	return c.GetRunLogsFrom(ctx, runID, 0, 0)
 }
 
 // GetRunLogsFrom fetches logs for an action run starting at offset. Passing the
 // number of lines already seen turns a repeated poll into an incremental tail
 // rather than a full refetch. offset and limit are omitted when non-positive.
-func (c *Client) GetRunLogsFrom(runID string, offset, limit int) ([]RunLog, error) {
+func (c *Client) GetRunLogsFrom(ctx context.Context, runID string, offset, limit int) ([]RunLog, error) {
 	params := url.Values{}
 	if offset > 0 {
 		params.Set("offset", strconv.Itoa(offset))
@@ -227,7 +294,7 @@ func (c *Client) GetRunLogsFrom(runID string, offset, limit int) ([]RunLog, erro
 		path += "?" + params.Encode()
 	}
 
-	data, err := c.doRequest("GET", path, nil)
+	data, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -267,8 +334,8 @@ type BlueprintDetail struct {
 }
 
 // GetBlueprint fetches a single blueprint by identifier.
-func (c *Client) GetBlueprint(identifier string) (*BlueprintDetail, error) {
-	data, err := c.doRequest("GET", "/v1/blueprints/"+url.PathEscape(identifier), nil)
+func (c *Client) GetBlueprint(ctx context.Context, identifier string) (*BlueprintDetail, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/blueprints/"+url.PathEscape(identifier), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -283,8 +350,8 @@ func (c *Client) GetBlueprint(identifier string) (*BlueprintDetail, error) {
 }
 
 // ListBlueprints fetches all blueprints.
-func (c *Client) ListBlueprints() ([]Blueprint, error) {
-	data, err := c.doRequest("GET", "/v1/blueprints", nil)
+func (c *Client) ListBlueprints(ctx context.Context) ([]Blueprint, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/blueprints", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +387,18 @@ func IsNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "(status 404)")
 }
 
+// IsUnauthorized reports whether err came from rejected credentials — either
+// the token exchange itself failing, or a request still 401ing after the
+// automatic re-authentication. Nothing will work until the credentials change,
+// which is worth telling a user plainly rather than retrying.
+func IsUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "(status 401)") || strings.Contains(msg, "auth failed (status")
+}
+
 // ErrPollTimeout reports that PollEntity gave up waiting. Callers format the
 // user-facing message themselves, since only they know what they waited for.
 var ErrPollTimeout = errors.New("timed out polling entity")
@@ -329,13 +408,14 @@ var ErrPollTimeout = errors.New("timed out polling entity")
 // usually waiting for an entity to appear, so "not found" is the expected
 // start state. Only check can stop early, by returning true or an error.
 func (c *Client) PollEntity(
+	ctx context.Context,
 	blueprint, identifier string,
 	timeout, interval time.Duration,
 	check func(*Entity, error) (bool, error),
 ) (*Entity, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		entity, fetchErr := c.GetEntity(blueprint, identifier)
+		entity, fetchErr := c.GetEntity(ctx, blueprint, identifier)
 		done, err := check(entity, fetchErr)
 		if err != nil {
 			return nil, err
@@ -346,7 +426,13 @@ func (c *Client) PollEntity(
 		if time.Now().After(deadline) {
 			return nil, ErrPollTimeout
 		}
-		time.Sleep(interval)
+		// Sleeping on the context rather than the clock is the difference
+		// between a cancellation landing now and landing one interval from now.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
 	}
 }
 
@@ -360,8 +446,8 @@ type EntitySummary struct {
 }
 
 // SearchEntities lists all entities for a given blueprint.
-func (c *Client) SearchEntities(blueprint string) ([]EntitySummary, error) {
-	data, err := c.doRequest("GET", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities", nil)
+func (c *Client) SearchEntities(ctx context.Context, blueprint string) ([]EntitySummary, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +489,7 @@ func searchProperty(field string) string {
 }
 
 // SearchEntitiesWithFilter lists entities for a blueprint filtered by a property value.
-func (c *Client) SearchEntitiesWithFilter(blueprint, field, value string) ([]EntitySummary, error) {
+func (c *Client) SearchEntitiesWithFilter(ctx context.Context, blueprint, field, value string) ([]EntitySummary, error) {
 	body := map[string]any{
 		"rules": []map[string]any{
 			{
@@ -419,7 +505,7 @@ func (c *Client) SearchEntitiesWithFilter(blueprint, field, value string) ([]Ent
 		},
 		"combinator": "and",
 	}
-	data, err := c.doRequest("POST", "/v1/entities/search", body)
+	data, err := c.doRequest(ctx, "POST", "/v1/entities/search", body)
 	if err != nil {
 		return nil, err
 	}
@@ -434,24 +520,24 @@ func (c *Client) SearchEntitiesWithFilter(blueprint, field, value string) ([]Ent
 }
 
 // UpdateEntityProperties updates properties on an entity using PATCH.
-func (c *Client) UpdateEntityProperties(blueprint, identifier string, properties map[string]any) error {
+func (c *Client) UpdateEntityProperties(ctx context.Context, blueprint, identifier string, properties map[string]any) error {
 	body := map[string]any{
 		"properties": properties,
 	}
-	_, err := c.doRequest("PATCH", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities/"+url.PathEscape(identifier), body)
+	_, err := c.doRequest(ctx, "PATCH", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities/"+url.PathEscape(identifier), body)
 	return err
 }
 
 // DeleteEntity deletes a catalog entity by blueprint and identifier.
-func (c *Client) DeleteEntity(blueprint, identifier string) error {
+func (c *Client) DeleteEntity(ctx context.Context, blueprint, identifier string) error {
 	path := fmt.Sprintf("/v1/blueprints/%s/entities/%s", url.PathEscape(blueprint), url.PathEscape(identifier))
-	_, err := c.doRequest("DELETE", path, nil)
+	_, err := c.doRequest(ctx, "DELETE", path, nil)
 	return err
 }
 
 // GetEntity fetches a catalog entity by blueprint and identifier.
-func (c *Client) GetEntity(blueprint, identifier string) (*Entity, error) {
-	data, err := c.doRequest("GET", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities/"+url.PathEscape(identifier), nil)
+func (c *Client) GetEntity(ctx context.Context, blueprint, identifier string) (*Entity, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/blueprints/"+url.PathEscape(blueprint)+"/entities/"+url.PathEscape(identifier), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +552,7 @@ func (c *Client) GetEntity(blueprint, identifier string) (*Entity, error) {
 // ExecuteAction triggers a self-service action and returns the run.
 // If runAs is non-empty, the action is executed on behalf of that user email.
 // If entity is non-empty, the action targets an existing entity (day-2 action).
-func (c *Client) ExecuteAction(actionID string, properties map[string]any, runAs, entity, identifier string) (*ActionRun, error) {
+func (c *Client) ExecuteAction(ctx context.Context, actionID string, properties map[string]any, runAs, entity, identifier string) (*ActionRun, error) {
 	props := make(map[string]any, len(properties)+1)
 	for k, v := range properties {
 		props[k] = v
@@ -487,7 +573,7 @@ func (c *Client) ExecuteAction(actionID string, properties map[string]any, runAs
 		path += "?run_as=" + url.QueryEscape(runAs)
 	}
 
-	data, err := c.doRequest("POST", path, body)
+	data, err := c.doRequest(ctx, "POST", path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -500,8 +586,8 @@ func (c *Client) ExecuteAction(actionID string, properties map[string]any, runAs
 }
 
 // GetActionRun fetches the current state of an action run.
-func (c *Client) GetActionRun(runID string) (*ActionRun, error) {
-	data, err := c.doRequest("GET", "/v1/actions/runs/"+runID, nil)
+func (c *Client) GetActionRun(ctx context.Context, runID string) (*ActionRun, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/actions/runs/"+runID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -514,17 +600,21 @@ func (c *Client) GetActionRun(runID string) (*ActionRun, error) {
 }
 
 // WaitForRun polls until the run completes or the timeout is reached.
-func (c *Client) WaitForRun(runID string, pollInterval, timeout time.Duration) (*ActionRun, error) {
+func (c *Client) WaitForRun(ctx context.Context, runID string, pollInterval, timeout time.Duration) (*ActionRun, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		run, err := c.GetActionRun(runID)
+		run, err := c.GetActionRun(ctx, runID)
 		if err != nil {
 			return nil, err
 		}
 		if run.Run.Status != "IN_PROGRESS" {
 			return run, nil
 		}
-		time.Sleep(pollInterval)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
 	}
 	return nil, fmt.Errorf("timed out waiting for run %s after %s", runID, timeout)
 }
@@ -594,8 +684,8 @@ type ActionDetail struct {
 }
 
 // GetAction fetches a self-service action and its input schema by identifier.
-func (c *Client) GetAction(identifier string) (*ActionDetail, error) {
-	data, err := c.doRequest("GET", "/v1/actions/"+url.PathEscape(identifier), nil)
+func (c *Client) GetAction(ctx context.Context, identifier string) (*ActionDetail, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/actions/"+url.PathEscape(identifier), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -616,8 +706,8 @@ func (c *Client) GetAction(identifier string) (*ActionDetail, error) {
 // version=v2 is explicit rather than defaulted: the trigger shape differs
 // between versions, and pinning it keeps a server-side default change from
 // silently reshaping what we decode.
-func (c *Client) ListActions() ([]ActionDetail, error) {
-	data, err := c.doRequest("GET", "/v1/actions?trigger_type=self-service&version=v2", nil)
+func (c *Client) ListActions(ctx context.Context) ([]ActionDetail, error) {
+	data, err := c.doRequest(ctx, "GET", "/v1/actions?trigger_type=self-service&version=v2", nil)
 	if err != nil {
 		return nil, err
 	}

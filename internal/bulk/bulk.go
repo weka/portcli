@@ -3,6 +3,7 @@
 package bulk
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 )
@@ -18,7 +19,7 @@ const DefaultConcurrency = 5
 // onResult is called once per id with that id's outcome, from the worker
 // goroutine but serialised — so an implementation may print or mutate shared
 // state without locking. Results arrive in completion order, not input order.
-func Apply(ids []string, concurrency int, fn func(id string) error, onResult func(id string, err error)) int {
+func Apply(ctx context.Context, ids []string, concurrency int, fn func(context.Context, string) error, onResult func(id string, err error)) int {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -31,13 +32,18 @@ func Apply(ids []string, concurrency int, fn func(id string) error, onResult fun
 	)
 
 	for _, id := range ids {
+		// Stop handing out new work once cancelled. Requests already in flight
+		// are carrying the same ctx and will fail on their own.
+		if ctx.Err() != nil {
+			break
+		}
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			err := fn(id)
+			err := fn(ctx, id)
 			if err != nil {
 				failed.Add(1)
 			}

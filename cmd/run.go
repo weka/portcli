@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,6 +50,7 @@ func init() {
 }
 
 func runAction(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	actionID := args[0]
 
 	cfg, err := config.Load()
@@ -64,7 +66,7 @@ func runAction(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	fmt.Fprintf(os.Stderr, "Executing action: %s\n", actionID)
-	result, err := c.ExecuteAction(actionID, properties, runAs, entityID, identifier)
+	result, err := c.ExecuteAction(ctx, actionID, properties, runAs, entityID, identifier)
 	if err != nil {
 		return fmt.Errorf("failed to execute action: %w", err)
 	}
@@ -76,7 +78,7 @@ func runAction(cmd *cobra.Command, args []string) error {
 	// immediately whether or not the upsert succeeded, so neither --wait nor
 	// `action status` can ever report the outcome. The entity is the only
 	// evidence, so confirm it landed instead of reporting a phantom success.
-	upserted, err := upsert.Verify(c, upsert.Request{
+	upserted, err := upsert.Verify(ctx, c, upsert.Request{
 		ActionID:   actionID,
 		RunID:      runID,
 		Identifier: identifier,
@@ -96,6 +98,7 @@ func runAction(cmd *cobra.Command, args []string) error {
 	if wait && result.Run.Status == "IN_PROGRESS" {
 		fmt.Fprintf(os.Stderr, "Waiting for completion (timeout: %ds)...\n", timeoutSecs)
 		result, err = c.WaitForRun(
+			ctx,
 			runID,
 			time.Duration(pollSeconds)*time.Second,
 			time.Duration(timeoutSecs)*time.Second,
@@ -111,7 +114,7 @@ func runAction(cmd *cobra.Command, args []string) error {
 	} else {
 		out, _ := json.MarshalIndent(result.Run, "", "  ")
 		fmt.Println(string(out))
-		printLinkedEntities(c, result)
+		printLinkedEntities(ctx, c, result)
 	}
 
 	// With --wait we know the terminal status, so reflect a failed run in the exit
@@ -138,8 +141,8 @@ func emitRunJSON(result *client.ActionRun) {
 	fmt.Println(string(out))
 }
 
-func printLinkedEntities(c *client.Client, result *client.ActionRun) {
-	for _, resolved := range c.ResolveLinks(result) {
+func printLinkedEntities(ctx context.Context, c *client.Client, result *client.ActionRun) {
+	for _, resolved := range c.ResolveLinks(ctx, result) {
 		fmt.Fprintf(os.Stderr, "\nLinked entity: %s/%s\n", resolved.Link.Blueprint, resolved.Link.Identifier)
 		if resolved.Err != nil {
 			fmt.Fprintf(os.Stderr, "  (could not fetch: %v)\n", resolved.Err)

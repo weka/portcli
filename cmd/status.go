@@ -23,6 +23,7 @@ Examples:
 }
 
 func getStatus(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	runID := args[0]
 
 	cfg, err := config.Load()
@@ -32,7 +33,7 @@ func getStatus(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 
-	result, err := c.GetActionRun(runID)
+	result, err := c.GetActionRun(ctx, runID)
 	if err != nil {
 		return upsert.ExplainMissingRun(fmt.Errorf("failed to get run: %w", err))
 	}
@@ -42,6 +43,6 @@ func getStatus(cmd *cobra.Command, args []string) error {
 	out, _ := json.MarshalIndent(result.Run, "", "  ")
 	fmt.Println(string(out))
 
-	printLinkedEntities(c, result)
+	printLinkedEntities(ctx, c, result)
 	return nil
 }

@@ -41,6 +41,7 @@ func init() {
 }
 
 func getEntity(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	blueprint := args[0]
 
 	cfg, err := config.Load()
@@ -64,13 +65,13 @@ func getEntity(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			entities, err = c.SearchEntitiesWithFilter(blueprint, field, value)
+			entities, err = c.SearchEntitiesWithFilter(ctx, blueprint, field, value)
 			if err != nil {
 				return fmt.Errorf("failed to search entities: %w", err)
 			}
 		} else {
 			var err error
-			entities, err = c.SearchEntities(blueprint)
+			entities, err = c.SearchEntities(ctx, blueprint)
 			if err != nil {
 				return fmt.Errorf("failed to list entities: %w", err)
 			}
@@ -115,7 +116,7 @@ func getEntity(cmd *cobra.Command, args []string) error {
 
 	identifier := args[1]
 
-	entity, err := c.GetEntity(blueprint, identifier)
+	entity, err := c.GetEntity(ctx, blueprint, identifier)
 	if err != nil {
 		return fmt.Errorf("failed to get entity: %w", err)
 	}

@@ -37,13 +37,14 @@ func init() {
 }
 
 func getAction(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
 	c := client.New(cfg)
-	action, err := c.GetAction(args[0])
+	action, err := c.GetAction(ctx, args[0])
 	if err != nil {
 		return fmt.Errorf("failed to get action: %w", err)
 	}

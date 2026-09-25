@@ -1,13 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/weka/portcli/internal/bulk"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
 	"github.com/weka/portcli/internal/portfmt"
@@ -60,6 +60,7 @@ func init() {
 }
 
 func updateEntity(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	blueprint := args[0]
 
 	bulkMode := updateAll || updateFilter != ""
@@ -104,11 +105,11 @@ func updateEntity(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	if bulkMode {
-		return updateAllEntities(c, blueprint, props, updateFilter)
+		return updateAllEntities(ctx, c, blueprint, props, updateFilter)
 	}
 
 	identifier := args[1]
-	if err := c.UpdateEntityProperties(blueprint, identifier, props); err != nil {
+	if err := c.UpdateEntityProperties(ctx, blueprint, identifier, props); err != nil {
 		return fmt.Errorf("failed to update entity %s: %w", identifier, err)
 	}
 	fmt.Printf("Updated %s on entity %s\n", propNames(props), identifier)
@@ -124,52 +125,20 @@ func propNames(props map[string]any) string {
 	return strings.Join(names, ", ")
 }
 
-func updateAllEntities(c *client.Client, blueprint string, props map[string]any, filter string) error {
-	var entities []client.EntitySummary
-	var err error
-
-	if filter != "" {
-		field, value, ferr := portfmt.ParseFilter(filter)
-		if ferr != nil {
-			return ferr
-		}
-		entities, err = c.SearchEntitiesWithFilter(blueprint, field, value)
-	} else {
-		entities, err = c.SearchEntities(blueprint)
-	}
+func updateAllEntities(ctx context.Context, c *client.Client, blueprint string, props map[string]any, filter string) error {
+	entities, filterDesc, err := resolveEntities(ctx, c, blueprint, filter)
 	if err != nil {
-		return fmt.Errorf("failed to list entities: %w", err)
+		return err
 	}
-
 	if len(entities) == 0 {
 		fmt.Println("No entities found")
 		return nil
 	}
 
-	filterDesc := ""
-	if filter != "" {
-		filterDesc = fmt.Sprintf(" matching filter %q", filter)
-	}
 	fmt.Printf("Updating %s on %d entities%s...\n", propNames(props), len(entities), filterDesc)
 
-	ids := make([]string, len(entities))
-	for i, entity := range entities {
-		ids[i] = entity.Identifier
-	}
-
-	f := bulk.Apply(ids, bulk.DefaultConcurrency,
-		func(id string) error { return c.UpdateEntityProperties(blueprint, id, props) },
-		func(id string, err error) {
-			if err != nil {
-				fmt.Printf("  FAILED %s: %v\n", id, err)
-				return
-			}
-			fmt.Printf("  Updated %s\n", id)
+	return runBulk(ctx, entityIDs(entities), "Updated", "updates",
+		func(ctx context.Context, id string) error {
+			return c.UpdateEntityProperties(ctx, blueprint, id, props)
 		})
-
-	if f > 0 {
-		return fmt.Errorf("%d of %d updates failed", f, len(entities))
-	}
-	fmt.Printf("All %d entities updated\n", len(entities))
-	return nil
 }
