@@ -73,6 +73,18 @@ type Resource interface {
 	Ops() []Op
 }
 
+// dynamicColumns is implemented by resources whose columns are only known
+// once data has been fetched — entity columns come from the blueprint schema,
+// which is not available until the blueprint is read.
+//
+// The columns are returned from the fetch rather than stored on the resource
+// so that only the view holds them, and only the UI goroutine touches them.
+// A resource field written by the fetch goroutine and read by the renderer
+// would be a data race.
+type dynamicColumns interface {
+	ListWithColumns(ctx context.Context, c *client.Client) ([]Column, []Row, error)
+}
+
 // factory builds a resource from the arguments typed after its name in the
 // command palette.
 type factory func(args []string) (Resource, error)

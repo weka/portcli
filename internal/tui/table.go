@@ -25,6 +25,7 @@ type tableView struct {
 	filterIn string
 	marked   map[string]bool
 	wide     bool
+	dynCols  []Column // set by resources whose columns come from fetched data
 
 	interval time.Duration
 	lastErr  string
@@ -73,11 +74,25 @@ func (v *tableView) Primitive() tview.Primitive { return v.table }
 func (v *tableView) Ops() []Op                  { return v.res.Ops() }
 func (v *tableView) Stop()                      { v.ref.stop() }
 
+// listing is one fetch's result. Columns travel with the rows so a resource
+// that derives them from fetched data never has to store them itself.
+type listing struct {
+	columns []Column
+	rows    []Row
+}
+
 func (v *tableView) Start(ctx context.Context) {
 	v.fetching = true
 	v.nextAt = time.Now().Add(v.interval)
 	v.ref.start(ctx, v.interval,
-		func(ctx context.Context) (any, error) { return v.res.List(ctx, v.app.client) },
+		func(ctx context.Context) (any, error) {
+			if dyn, ok := v.res.(dynamicColumns); ok {
+				cols, rows, err := dyn.ListWithColumns(ctx, v.app.client)
+				return listing{columns: cols, rows: rows}, err
+			}
+			rows, err := v.res.List(ctx, v.app.client)
+			return listing{rows: rows}, err
+		},
 		func(data any, err error) {
 			v.fetching = false
 			v.nextAt = time.Now().Add(v.interval)
@@ -90,8 +105,11 @@ func (v *tableView) Start(ctx context.Context) {
 				return
 			}
 			v.lastErr = ""
-			rows, _ := data.([]Row)
-			v.rows = rows
+			got, _ := data.(listing)
+			if got.columns != nil {
+				v.dynCols = got.columns
+			}
+			v.rows = got.rows
 			v.render()
 		})
 }
@@ -176,9 +194,17 @@ func (v *tableView) clearMarks() {
 	v.render()
 }
 
+// allColumns is the full column set in the order a row's cells are laid out.
+func (v *tableView) allColumns() []Column {
+	if v.dynCols != nil {
+		return v.dynCols
+	}
+	return v.res.Columns()
+}
+
 // columns returns the columns to draw, dropping wide ones unless asked for.
 func (v *tableView) columns() []Column {
-	all := v.res.Columns()
+	all := v.allColumns()
 	if v.wide {
 		return all
 	}
@@ -220,7 +246,7 @@ func (v *tableView) render() {
 
 	v.table.Clear()
 	cols := v.columns()
-	all := v.res.Columns()
+	all := v.allColumns()
 	for i, c := range cols {
 		v.table.SetCell(0, i, tview.NewTableCell(c.Name).
 			SetTextColor(colorTitle).

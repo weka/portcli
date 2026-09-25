@@ -2,9 +2,16 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 )
+
+// filterView is a view that can narrow what it shows. Tables filter rows; the
+// log pane filters lines.
+type filterView interface {
+	setFilter(pattern string) error
+}
 
 type promptMode int
 
@@ -59,23 +66,30 @@ func (a *App) submitPrompt(text string) {
 	a.closePrompt()
 
 	if mode == promptFilter {
-		t, ok := a.top().(*tableView)
+		// Tables and the log pane both filter, over different things.
+		f, ok := a.top().(filterView)
 		if !ok {
+			a.flash.show(flashWarn, "this view cannot be filtered")
 			return
 		}
-		if err := t.setFilter(text); err != nil {
+		if err := f.setFilter(text); err != nil {
 			a.flash.show(flashError, "bad filter pattern: %v", err)
 			return
 		}
-		shown, total, _ := t.counts()
-		switch {
-		case text == "":
+		if text == "" {
 			a.flash.show(flashInfo, "filter cleared")
-		case shown == 0:
-			a.flash.show(flashWarn, "no rows match %q (of %d)", text, total)
-		default:
-			a.flash.show(flashInfo, "%d of %d rows match %q", shown, total, text)
+			return
 		}
+		if t, ok := a.top().(*tableView); ok {
+			shown, total, _ := t.counts()
+			if shown == 0 {
+				a.flash.show(flashWarn, "no rows match %q (of %d)", text, total)
+			} else {
+				a.flash.show(flashInfo, "%d of %d rows match %q", shown, total, text)
+			}
+			return
+		}
+		a.flash.show(flashInfo, "filtering on %q", text)
 		return
 	}
 
@@ -107,8 +121,38 @@ func (a *App) runCommand(text string) error {
 		return nil
 	case "refresh":
 		return a.setRefresh(cmd.Args)
+	case "cols", "columns":
+		return a.setColumns(cmd.Args)
 	}
 	return a.open(text)
+}
+
+// setColumns overrides the columns a resource chose for itself.
+func (a *App) setColumns(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: :cols <property>[,<property>...]")
+	}
+	t, ok := a.top().(*tableView)
+	if !ok {
+		return fmt.Errorf("this view has no columns")
+	}
+	setter, ok := t.res.(interface{ SetColumns([]string) })
+	if !ok {
+		return fmt.Errorf("%s does not take column overrides", t.res.Kind())
+	}
+
+	var cols []string
+	for _, group := range args {
+		for _, name := range strings.Split(group, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				cols = append(cols, name)
+			}
+		}
+	}
+	setter.SetColumns(cols)
+	t.refreshNow(a.ctx)
+	a.flash.show(flashInfo, "columns: %s", strings.Join(cols, ", "))
+	return nil
 }
 
 // setRefresh changes the current view's poll interval for this session.

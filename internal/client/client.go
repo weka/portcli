@@ -659,10 +659,19 @@ func isJSONNull(raw json.RawMessage) bool {
 }
 
 // ActionDetail represents a Port self-service action and its input schema.
+//
+// Fields may be added freely: `action get --json` marshals a curated map of
+// selected values, not this struct, so its output does not widen when this
+// does. ActionInput is the opposite case — that one *is* marshalled directly.
 type ActionDetail struct {
-	Identifier string `json:"identifier"`
-	Title      string `json:"title"`
-	Trigger    struct {
+	Identifier       string `json:"identifier"`
+	Title            string `json:"title"`
+	Description      string `json:"description"`
+	Publish          bool   `json:"publish"`
+	RequiredApproval bool   `json:"requiredApproval"`
+	CreatedAt        string `json:"createdAt"`
+	UpdatedAt        string `json:"updatedAt"`
+	Trigger          struct {
 		BlueprintIdentifier string `json:"blueprintIdentifier"`
 		Operation           string `json:"operation"`
 		UserInputs          struct {
