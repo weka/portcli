@@ -188,7 +188,26 @@ type RunLog struct {
 
 // GetRunLogs fetches logs for an action run.
 func (c *Client) GetRunLogs(runID string) ([]RunLog, error) {
-	data, err := c.doRequest("GET", "/v1/actions/runs/"+runID+"/logs", nil)
+	return c.GetRunLogsFrom(runID, 0, 0)
+}
+
+// GetRunLogsFrom fetches logs for an action run starting at offset. Passing the
+// number of lines already seen turns a repeated poll into an incremental tail
+// rather than a full refetch. offset and limit are omitted when non-positive.
+func (c *Client) GetRunLogsFrom(runID string, offset, limit int) ([]RunLog, error) {
+	params := url.Values{}
+	if offset > 0 {
+		params.Set("offset", strconv.Itoa(offset))
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/actions/runs/" + url.PathEscape(runID) + "/logs"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	data, err := c.doRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -491,12 +510,42 @@ func (c *Client) WaitForRun(runID string, pollInterval, timeout time.Duration) (
 }
 
 // ActionInput describes a single user input of a self-service action.
+//
+// Enum is deliberately raw. Port sends it either as a list of choices or as a
+// {"jqQuery": "…"} object it evaluates server-side, and decoding the object
+// form into a concrete Go type fails the whole action — which silently
+// disabled UPSERT_ENTITY verification, since verifyUpsert treats any GetAction
+// error as "not an upsert". Read it through EnumValues.
+//
+// The json tag stays bare: a nil json.RawMessage marshals to null exactly as
+// the previous []any did, so `action get --json` is unchanged.
 type ActionInput struct {
-	Type        string `json:"type"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Default     any    `json:"default"`
-	Enum        []any  `json:"enum"`
+	Type        string          `json:"type"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Default     any             `json:"default"`
+	Enum        json.RawMessage `json:"enum"`
+}
+
+// EnumValues returns the input's choices, distinguishing the three shapes Port
+// uses: no enum at all (nil, false), a fixed list (values, false), and a query
+// Port evaluates server-side whose results we cannot know (nil, true). A
+// dynamic enum means the caller must accept free text.
+func (i ActionInput) EnumValues() (values []any, dynamic bool) {
+	if isJSONNull(i.Enum) {
+		return nil, false
+	}
+	if json.Unmarshal(i.Enum, &values) != nil {
+		return nil, true
+	}
+	return values, false
+}
+
+// isJSONNull reports whether raw JSON is absent or the literal null — decoding
+// `"enum": null` yields the bytes "null", not a nil slice.
+func isJSONNull(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 0 || string(trimmed) == "null"
 }
 
 // ActionDetail represents a Port self-service action and its input schema.
@@ -538,4 +587,26 @@ func (c *Client) GetAction(identifier string) (*ActionDetail, error) {
 		return nil, fmt.Errorf("failed to parse action response: %w", err)
 	}
 	return &result.Action, nil
+}
+
+// ListActions fetches every self-service action with its full schema. Port
+// returns complete action objects here — trigger inputs and invocation mapping
+// included — so one call answers what would otherwise be a GetAction per row.
+//
+// version=v2 is explicit rather than defaulted: the trigger shape differs
+// between versions, and pinning it keeps a server-side default change from
+// silently reshaping what we decode.
+func (c *Client) ListActions() ([]ActionDetail, error) {
+	data, err := c.doRequest("GET", "/v1/actions?trigger_type=self-service&version=v2", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Actions []ActionDetail `json:"actions"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse actions response: %w", err)
+	}
+	return result.Actions, nil
 }

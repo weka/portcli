@@ -149,8 +149,15 @@ func inputRef(tmpl string) (string, bool) {
 // cannot be determined — in those cases there is nothing to check and the
 // normal run-status flow applies.
 func verifyUpsert(c *client.Client, actionID, runID string, runProps map[string]any) (*client.Entity, error) {
+	// Report a failed lookup rather than reading it as "not an upsert". Whether
+	// verification applies is exactly what this call answers, so treating an
+	// error as "nothing to check" turns any transient failure into a silent
+	// pass — the phantom success this whole function exists to prevent.
 	action, err := c.GetAction(actionID)
-	if err != nil || action.InvocationMethod.Type != "UPSERT_ENTITY" {
+	if err != nil {
+		return nil, fmt.Errorf("cannot tell whether %s is an UPSERT_ENTITY action, so its result is unverified: %w", actionID, err)
+	}
+	if action.InvocationMethod.Type != "UPSERT_ENTITY" {
 		return nil, nil
 	}
 

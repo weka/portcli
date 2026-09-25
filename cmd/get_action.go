@@ -56,7 +56,14 @@ func getAction(cmd *cobra.Command, args []string) error {
 		if !ok {
 			return fmt.Errorf("input %q not found on action %q", actionGetEnum, action.Identifier)
 		}
-		for _, v := range prop.Enum {
+		values, dynamic := prop.EnumValues()
+		if dynamic {
+			// Printing nothing here would read as "this input accepts nothing",
+			// when in fact Port computes the choices at run time.
+			return fmt.Errorf("input %q of action %q has no fixed enum: its values come from a server-side query, so they cannot be listed",
+				actionGetEnum, action.Identifier)
+		}
+		for _, v := range values {
 			fmt.Println(anyToString(v))
 		}
 		return nil
@@ -89,7 +96,7 @@ func getAction(cmd *cobra.Command, args []string) error {
 		if required[name] {
 			req = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, p.Type, req, anyToString(p.Default), enumPreview(p.Enum))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, p.Type, req, anyToString(p.Default), enumColumn(p))
 	}
 	w.Flush()
 	return nil
@@ -126,6 +133,17 @@ func anyToString(v any) string {
 	}
 	out, _ := json.Marshal(v)
 	return string(out)
+}
+
+// enumColumn renders the ENUM cell for one input. A jq-driven enum has no
+// values to show, so it is named as such instead of rendering blank alongside
+// inputs that genuinely accept anything.
+func enumColumn(p client.ActionInput) string {
+	values, dynamic := p.EnumValues()
+	if dynamic {
+		return "<dynamic>"
+	}
+	return enumPreview(values)
 }
 
 // enumPreview joins enum values for the table, truncating long lists.

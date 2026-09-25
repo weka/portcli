@@ -92,6 +92,21 @@ portcli/
   exactly which ones did not resolve.
 - **`GET /v1/actions/runs/{id}/logs` answers 200 with an empty list** for a run that
   does not exist, so an empty result is ambiguous rather than proof of no output.
+  It accepts `offset`/`limit`, so a repeated poll can tail incrementally —
+  `GetRunLogsFrom` takes the number of lines already seen.
+- **An action input's `enum` may be an object, not a list.** Port sends either the
+  choices themselves or `{"jqQuery": "…"}` for an enum it evaluates server-side.
+  `ActionInput.Enum` is therefore `json.RawMessage`, read through `EnumValues()`
+  (choices, or ok=false) and `DynamicEnum()`. Decoding it into `[]any` failed the
+  *entire* action fetch, and because `verifyUpsert` reads any `GetAction` error as
+  "not an upsert", that silently disabled UPSERT_ENTITY verification for every
+  affected action. `default` and `visible` take the same jq form — `visible`
+  especially (most inputs that have it use a query), which is why a UI should show
+  such inputs rather than try to evaluate their visibility.
+- **`GET /v1/actions?trigger_type=self-service&version=v2` returns complete action
+  objects**, trigger inputs and invocation mapping included — so `ListActions`
+  answers in one call what would otherwise be a `GetAction` per action. Pass
+  `version` explicitly; the trigger shape differs between versions.
 
 ## Configuration
 - Env vars: `PORT_CLIENT_ID`, `PORT_CLIENT_SECRET`, `PORT_BASE_URL`
