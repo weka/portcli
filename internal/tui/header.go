@@ -90,27 +90,73 @@ func (h headerInfo) headerLines() []string {
 // the context panel and the status cards. width aligns the labels within one
 // block; blocks differ, so it is a parameter rather than a constant.
 func fieldLine(name, value string, width int) string {
-	return fmt.Sprintf("[darkcyan::b]%-*s[white::-]%s", width, name+":", value)
+	return fmt.Sprintf("[%s::b]%-*s[%s::-]%s", tagLabel, width, name+":", tagValue, value)
 }
 
-// hintLines renders the key hints beside the context panel: the operations the
-// current view offers, then the keys that always work.
+// Widths of the header's fixed blocks.
+const (
+	ctxPanelWidth = 38
+	logoWidth     = 27
+)
+
+// hintRows is how many rows of key hints the header has room for. The context
+// panel is the tallest block, and the legend reads across into it.
+const hintRows = 6
+
+// hint renders one "<key> description" pair, padded so a column lines up.
+// The visible width has to be computed from the plain text, since the colour
+// tags are markup rather than characters on screen.
+func hint(key, desc string, width int) string {
+	plain := fmt.Sprintf("<%s> %s", key, desc)
+	pad := width - len([]rune(plain))
+	if pad < 0 {
+		pad = 0
+	}
+	return fmt.Sprintf("[%s]<[%s]%s[%s]>[%s] %s%s",
+		tagDim, tagKey, key, tagDim, tagHint, desc, strings.Repeat(" ", pad))
+}
+
+// hintLines lays the key legend out in columns, filling top to bottom like
+// k9s does, so the header stays a fixed height however many operations the
+// current view offers.
 func hintLines(ops []Op) []string {
-	var view []string
+	type pair struct{ key, desc string }
+	pairs := make([]pair, 0, len(ops)+8)
 	for _, op := range ops {
-		view = append(view, fmt.Sprintf("[dimgray]<[white]%s[dimgray]>[-] %s", op.Label(), op.Name))
+		pairs = append(pairs, pair{op.Label(), op.Name})
+	}
+	// The always-available keys come last so a view's own operations lead.
+	for _, g := range []pair{
+		{":", "command"}, {"/", "filter"}, {"?", "help"},
+		{"ctrl-r", "refresh"}, {"space", "mark"}, {"esc", "back"}, {"q", "quit"},
+	} {
+		pairs = append(pairs, g)
 	}
 
-	global := []string{
-		"[dimgray]<[white]:[dimgray]>[-] command   [dimgray]<[white]/[dimgray]>[-] filter",
-		"[dimgray]<[white]?[dimgray]>[-] help      [dimgray]<[white]ctrl-r[dimgray]>[-] refresh",
-		"[dimgray]<[white]esc[dimgray]>[-] back    [dimgray]<[white]q[dimgray]>[-] quit",
+	// Column width from the widest entry in each column, so short columns do
+	// not get padded out to the width of a long one.
+	columns := (len(pairs) + hintRows - 1) / hintRows
+	widths := make([]int, columns)
+	for i, p := range pairs {
+		c := i / hintRows
+		if w := len(p.key) + len(p.desc) + 3; w > widths[c] {
+			widths[c] = w
+		}
 	}
 
-	// Two columns' worth of view hints, then the globals, is about what fits
-	// beside the context panel without wrapping on an 80-column terminal.
-	if len(view) > 3 {
-		view = append(view[:3], fmt.Sprintf("[dimgray]… +%d more (press ?)", len(view)-3))
+	lines := make([]string, hintRows)
+	for i, p := range pairs {
+		row, col := i%hintRows, i/hintRows
+		lines[row] += hint(p.key, p.desc, widths[col]+2)
 	}
-	return append(view, global...)
+	return lines
+}
+
+// logo returns the banner, coloured.
+func logo() string {
+	out := make([]string, len(logoLines))
+	for i, l := range logoLines {
+		out[i] = "[" + tagLabel + "::b]" + l
+	}
+	return strings.Join(out, "\n")
 }

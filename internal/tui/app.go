@@ -122,12 +122,15 @@ func newApp(ctx context.Context, c *client.Client, opts Options) *App {
 	a.ctxInfo = tview.NewTextView().SetDynamicColors(true)
 	a.hints = tview.NewTextView().SetDynamicColors(true)
 	a.logo = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignRight)
-	a.logo.SetText("[dodgerblue::b]portcli")
+	a.logo.SetText(logo())
 
+	// Fixed widths for the two blocks that know their own size, and the key
+	// legend takes whatever is left — so the logo stays pinned right and the
+	// context panel never gets squeezed by a long resource name.
 	header := tview.NewFlex().
-		AddItem(a.ctxInfo, 0, 2, false).
-		AddItem(a.hints, 0, 2, false).
-		AddItem(a.logo, 12, 0, false)
+		AddItem(a.ctxInfo, ctxPanelWidth, 0, false).
+		AddItem(a.hints, 0, 1, false).
+		AddItem(a.logo, logoWidth, 0, false)
 
 	a.crumbs = tview.NewTextView().SetDynamicColors(true)
 	a.prompt = tview.NewInputField()
@@ -283,15 +286,21 @@ func (a *App) saveState() {
 }
 
 func (a *App) drawCrumbs() {
+	// At the root the table's own title already names the view, so the trail
+	// would just repeat it. It earns its line only once nested.
+	if len(a.stack) < 2 {
+		a.crumbs.SetText("")
+		return
+	}
 	var parts []string
 	for i, v := range a.stack {
 		if i == len(a.stack)-1 {
-			parts = append(parts, "[dodgerblue::b]<"+v.Title()+">[-::-]")
+			parts = append(parts, "["+tagAccent+"::b]"+v.Title()+"[-::-]")
 			continue
 		}
-		parts = append(parts, "[dimgray]<"+v.Title()+">[-]")
+		parts = append(parts, "["+tagDim+"]"+v.Title()+"[-]")
 	}
-	a.crumbs.SetText(strings.Join(parts, " "))
+	a.crumbs.SetText(strings.Join(parts, "[gray] › [-]"))
 }
 
 func (a *App) drawHeader() {

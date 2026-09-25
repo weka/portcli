@@ -83,7 +83,10 @@ func TestHeaderLines(t *testing.T) {
 	})
 }
 
-func TestHintLinesTruncateLongOpLists(t *testing.T) {
+// The legend flows into columns rather than truncating, so the header stays a
+// fixed height however many operations a view offers — and no operation is
+// hidden from someone reading it.
+func TestHintLinesColumnsKeepEveryOp(t *testing.T) {
 	ops := []Op{
 		{Rune: 'd', Name: "Describe"},
 		{Rune: 'e', Name: "Edit"},
@@ -91,15 +94,51 @@ func TestHintLinesTruncateLongOpLists(t *testing.T) {
 		{Rune: 'r', Name: "Run"},
 		{Key: tcell.KeyCtrlD, Name: "Delete"},
 	}
-	out := strings.Join(hintLines(ops), "\n")
-	if !strings.Contains(out, "+2 more") {
-		t.Errorf("long op lists should be truncated with a pointer to help:\n%s", out)
+	lines := hintLines(ops)
+
+	if len(lines) != hintRows {
+		t.Errorf("got %d rows, want a fixed %d", len(lines), hintRows)
 	}
-	// The always-available keys must survive truncation.
-	for _, want := range []string{"command", "filter", "help", "quit"} {
+	out := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"Describe", "Edit", "Logs", "Run", "Delete", // every op
+		"command", "filter", "help", "quit", // and the always-available keys
+	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("missing global hint %q in:\n%s", want, out)
+			t.Errorf("missing %q from the legend:\n%s", want, out)
 		}
+	}
+}
+
+// Columns only line up if the padding is computed from the visible text; the
+// colour tags are markup and occupy no screen width.
+func TestHintPadsByVisibleWidthNotMarkupLength(t *testing.T) {
+	got := hint("d", "Describe", 20)
+	visible := stripTags(got)
+	if len([]rune(visible)) != 20 {
+		t.Errorf("visible width = %d, want 20 (got %q)", len([]rune(visible)), visible)
+	}
+	if !strings.HasPrefix(visible, "<d> Describe") {
+		t.Errorf("visible text = %q", visible)
+	}
+}
+
+// stripTags removes tview colour markup, leaving what is drawn.
+func stripTags(s string) string {
+	var b strings.Builder
+	for {
+		open := strings.IndexByte(s, '[')
+		if open < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		close := strings.IndexByte(s[open:], ']')
+		if close < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:open])
+		s = s[open+close+1:]
 	}
 }
 

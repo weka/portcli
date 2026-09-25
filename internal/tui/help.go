@@ -37,7 +37,7 @@ func (a *App) showHelp() {
 		row++
 	}
 	entry := func(key, desc string) {
-		t.SetCell(row, 0, tview.NewTableCell("  "+key).SetTextColor(colorHeaderKey).SetSelectable(false))
+		t.SetCell(row, 0, tview.NewTableCell("  "+key).SetTextColor(colorLabel).SetSelectable(false))
 		t.SetCell(row, 1, tview.NewTableCell(desc).SetSelectable(false))
 		row++
 	}

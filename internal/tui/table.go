@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -9,6 +10,10 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
+
+// maxCellWidth truncates a runaway value — a description, a JSON blob —
+// before it pushes every column after it off the screen.
+const maxCellWidth = 48
 
 // tableView renders any Resource. One instance per stack entry, so returning
 // to a view restores its scroll position, filter and marks.
@@ -27,6 +32,9 @@ type tableView struct {
 	wide     bool
 	dynCols  []Column // set by resources whose columns come from fetched data
 
+	sortCol  int // -1 when unsorted
+	sortDesc bool
+
 	interval time.Duration
 	lastErr  string
 	nextAt   time.Time
@@ -37,14 +45,22 @@ func newTableView(a *App, res Resource, interval time.Duration) *tableView {
 	t := tview.NewTable().
 		SetSelectable(true, false).
 		SetFixed(1, 0)
-	t.SetBorder(false)
-	t.SetSelectedStyle(tcell.StyleDefault.Background(colorSelected).Bold(true))
+	// A framed table with the resource named on the top border, k9s-style:
+	// the frame is what separates the list from the header block above it.
+	t.SetBorder(true).SetBorderColor(colorBorder).SetTitleAlign(tview.AlignCenter)
+	// A solid bar, not a tint: the selected row has to be unmistakable on a
+	// screen where the delete key acts on it.
+	t.SetSelectedStyle(tcell.StyleDefault.
+		Background(colorSelected).
+		Foreground(tcell.ColorBlack).
+		Bold(true))
 
 	v := &tableView{
 		app:      a,
 		res:      res,
 		table:    t,
 		marked:   map[string]bool{},
+		sortCol:  -1,
 		interval: interval,
 	}
 	v.ref.app = a.app
@@ -248,11 +264,19 @@ func (v *tableView) render() {
 	cols := v.columns()
 	all := v.allColumns()
 	for i, c := range cols {
-		v.table.SetCell(0, i, tview.NewTableCell(c.Name).
+		heading := c.Name
+		if i == v.sortCol && v.sortCol >= 0 {
+			heading += sortArrow(v.sortDesc)
+		}
+		cell := tview.NewTableCell(heading).
 			SetTextColor(colorTitle).
 			SetAttributes(tcell.AttrBold).
 			SetSelectable(false).
-			SetExpansion(1))
+			SetMaxWidth(maxCellWidth)
+		if i == len(cols)-1 {
+			cell.SetExpansion(1)
+		}
+		v.table.SetCell(0, i, cell)
 	}
 
 	// Cells arrive in the resource's full column order, so dropping wide
@@ -271,18 +295,36 @@ func (v *tableView) render() {
 	for i, r := range v.visible {
 		prefix := ""
 		if v.marked[r.ID] {
-			prefix = "[dodgerblue]›[-] "
+			prefix = "› "
 		}
+		dim := v.isInert(r)
 		for ci, src := range index {
 			text := ""
 			if src < len(r.Cells) {
 				text = r.Cells[src]
 			}
-			cell := tview.NewTableCell(prefix + text).SetExpansion(1)
-			if ci == 0 && v.marked[r.ID] {
-				cell.SetTextColor(colorTitle)
-			} else if c := statusColor(strings.TrimSpace(text)); c != tcell.ColorDefault {
-				cell.SetTextColor(c)
+			// No expansion: columns pack left with a single space between
+			// them, as k9s does. Spreading them to fill the width puts
+			// yards of whitespace between related values.
+			cell := tview.NewTableCell(prefix + text).SetMaxWidth(maxCellWidth)
+			// Only the last column stretches. That keeps the others packed
+			// left as k9s has them, while letting the selection bar run to
+			// the right edge instead of stopping at the last character.
+			if ci == len(index)-1 {
+				cell.SetExpansion(1)
+			}
+			switch {
+			case dim:
+				// Nothing more will happen to this row, so it recedes.
+				cell.SetTextColor(colorDimmed)
+			case ci == 0:
+				// The identifier is what the eye scans down, so it carries
+				// the accent even when the rest of the row is plain.
+				cell.SetTextColor(colorAccent)
+			default:
+				if c := statusColor(strings.TrimSpace(text)); c != tcell.ColorDefault {
+					cell.SetTextColor(c)
+				}
 			}
 			v.table.SetCell(i+1, ci, cell)
 			prefix = ""
@@ -304,7 +346,48 @@ func (v *tableView) render() {
 		}
 		v.table.Select(restored, 0)
 	}
+	v.setTitle()
 	v.app.drawHeader()
+}
+
+// isInert reports whether a row represents something spent — deleted,
+// destroyed, abandoned — which is drawn greyed out.
+func (v *tableView) isInert(r Row) bool {
+	for _, cell := range r.Cells {
+		if inertStatuses[strings.TrimSpace(cell)] {
+			return true
+		}
+	}
+	return false
+}
+
+// setTitle names the resource on the border, with its live counts, the way
+// k9s labels a table: pods(all)[31].
+func (v *tableView) setTitle() {
+	title := fmt.Sprintf(" [%s::b]%s", tagValue, v.res.Kind())
+	if arg := titleArg(v.res); arg != "" {
+		title += fmt.Sprintf("[%s::-](%s)", tagAccent, arg)
+	}
+	title += fmt.Sprintf("[%s::b][%d]", tagValue, len(v.visible))
+	if v.filterIn != "" {
+		title += fmt.Sprintf("[%s::-] /%s/", tagAccent, v.filterIn)
+	}
+	v.table.SetTitle(title + " ")
+}
+
+// titleArg is whatever narrows a resource — the blueprint, the entity —
+// taken from its id, which already carries exactly that.
+func titleArg(res Resource) string {
+	rest := strings.TrimPrefix(res.ID(), res.Kind())
+	return strings.Join(strings.Fields(rest), " ")
+}
+
+// sortArrow marks the sorted column in its heading.
+func sortArrow(desc bool) string {
+	if desc {
+		return "↓"
+	}
+	return "↑"
 }
 
 func (v *tableView) counts() (shown, total, marked int) {
