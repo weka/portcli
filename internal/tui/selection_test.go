@@ -45,13 +45,10 @@ func fakeEntities(t *testing.T, n int) (*client.Client, *config.Config) {
 // be the worst possible bug in a delete path, so the row the cursor is on and
 // the row an operation receives must be provably the same one.
 func TestConfirmationNamesTheHighlightedRow(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // never write the real ~/.portcli/tui.json
 	c, cfg := fakeEntities(t, 30)
 
 	sim := tcell.NewSimulationScreen("UTF-8")
-	if err := sim.Init(); err != nil {
-		t.Fatal(err)
-	}
-	sim.SetSize(120, 24)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -60,6 +57,8 @@ func TestConfirmationNamesTheHighlightedRow(t *testing.T) {
 		Version: "test", Config: cfg, View: "entities bp", Refresh: time.Hour,
 	})
 	a.app.SetScreen(sim)
+	// After SetScreen, not before: SetScreen calls Init, which resets the size.
+	sim.SetSize(150, 40)
 	go a.app.Run()
 	defer a.app.Stop()
 
@@ -121,19 +120,18 @@ func TestConfirmationNamesTheHighlightedRow(t *testing.T) {
 // Marking rows makes an operation apply to the marks rather than the cursor,
 // and the confirmation has to say so.
 func TestMarkedRowsDriveTheOperation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // never write the real ~/.portcli/tui.json
 	c, cfg := fakeEntities(t, 10)
 
 	sim := tcell.NewSimulationScreen("UTF-8")
-	if err := sim.Init(); err != nil {
-		t.Fatal(err)
-	}
-	sim.SetSize(120, 24)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	a := newApp(ctx, c, Options{Version: "test", Config: cfg, View: "entities bp", Refresh: time.Hour})
 	a.app.SetScreen(sim)
+	// After SetScreen, not before: SetScreen calls Init, which resets the size.
+	sim.SetSize(150, 40)
 	go a.app.Run()
 	defer a.app.Stop()
 

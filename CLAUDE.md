@@ -38,6 +38,17 @@ CLI tool for Port.io self-service actions. Built in Go with Cobra CLI framework.
   stolen globally (`stolenKeys`) to free `l` for logs; arrows still scroll.
   A test asserts no resource binds a key Table already owns.
 - The client secret is never rendered; the client id is masked. There is a test.
+- **Never call `screen.Init()` or `screen.Fini()`.** `Application.SetScreen`
+  calls Init and `Application.Stop` calls Fini; doing either a second time
+  leaves a real terminal drawing almost nothing and delivering no key events at
+  all, Ctrl-C included — indistinguishable from a hung process. A tcell
+  simulation screen tolerates it, so no rendering test can catch this;
+  `TestScreenIsInitialisedAndFinalisedExactlyOnce` counts the calls instead.
+- Tests that reach `saveState` must set `HOME` to a temp dir, or they rewrite
+  the developer's real `~/.portcli/tui.json`.
+- `scripts/smoke_tui.py` runs the TUI in a real pseudo-terminal and checks it
+  draws, responds to keys and restores the terminal. Run it after touching the
+  app shell — the simulation screen provably cannot catch this class of bug.
 
 ## Verifying a change did not alter CLI behaviour
 `scripts/compare_cli.sh [ref]` builds `ref` (default `HEAD`) in a throwaway git

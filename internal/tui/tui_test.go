@@ -58,13 +58,10 @@ func screenText(sim tcell.SimulationScreen) string {
 // frames are brittle, so it checks that the app runs and shows its table, not
 // how the pixels landed.
 func TestShellStartsRendersAndQuits(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // never write the real ~/.portcli/tui.json
 	c, cfg := fakePort(t)
 
 	sim := tcell.NewSimulationScreen("UTF-8")
-	if err := sim.Init(); err != nil {
-		t.Fatalf("simulation screen: %v", err)
-	}
-	sim.SetSize(140, 40)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -76,6 +73,8 @@ func TestShellStartsRendersAndQuits(t *testing.T) {
 		Refresh: time.Hour,    // one fetch; no background churn mid-assertion
 	})
 	a.app.SetScreen(sim)
+	// After SetScreen, not before: SetScreen calls Init, which resets the size.
+	sim.SetSize(150, 40)
 
 	done := make(chan error, 1)
 	go func() { done <- a.app.Run() }()

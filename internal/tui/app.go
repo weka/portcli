@@ -57,34 +57,41 @@ type App struct {
 // It returns only after the screen is restored, so a caller's os.Exit can
 // never fire while tcell still holds raw mode.
 func Run(ctx context.Context, c *client.Client, opts Options) error {
-	screen, err := tcell.NewScreen()
-	if err != nil {
-		return fmt.Errorf("cannot open a terminal screen (is TERM set?): %w", err)
+	// Probe the terminal before taking it over. NewScreen looks TERM up in the
+	// terminfo database without touching the terminal, so an unusable TERM is
+	// reported as a sentence here rather than as a blank screen. The screen is
+	// then discarded: tview's Run makes and initialises its own.
+	if _, err := tcell.NewScreen(); err != nil {
+		return fmt.Errorf("cannot use this terminal (TERM=%q): %w", termEnv(), err)
 	}
-	if err := screen.Init(); err != nil {
-		return fmt.Errorf("cannot initialise the terminal (TERM=%q): %w", termEnv(), err)
-	}
-	return run(ctx, c, opts, screen)
+	return run(ctx, c, opts, nil)
 }
 
-// run drives the UI on an already-initialised screen. Separate from Run so a
-// test can supply a tcell simulation screen.
+// run drives the UI. screen is nil in normal use, letting tview create and
+// initialise its own; a test passes a simulation screen instead.
+//
+// Nothing here initialises or finalises the screen, and that is deliberate.
+// Application.SetScreen calls Init itself and Stop calls Fini — doing either a
+// second time leaves a real terminal drawing almost nothing and delivering no
+// key events at all, Ctrl-C included, which presents exactly as a hang.
 func run(ctx context.Context, c *client.Client, opts Options, screen tcell.Screen) error {
-	// tview recovers panics on its own goroutine but not on one the TUI
-	// spawned, and a panic with the screen still live leaves the terminal in
-	// raw mode with no prompt.
-	defer func() {
-		screen.Fini()
-		if p := recover(); p != nil {
-			panic(p)
-		}
-	}()
-
 	// Anything a dependency logs would be drawn over the screen.
 	log.SetOutput(io.Discard)
 
 	a := newApp(ctx, c, opts)
-	a.app.SetScreen(screen)
+	if screen != nil {
+		a.app.SetScreen(screen)
+	}
+
+	// tview recovers panics on its own goroutine but not on one a view
+	// spawned, and a panic never reaches Stop — so without this the terminal
+	// is left in raw mode.
+	defer func() {
+		if p := recover(); p != nil {
+			a.app.Stop()
+			panic(p)
+		}
+	}()
 
 	// An external SIGTERM cancels ctx; tear the UI down rather than orphaning it.
 	go func() {
