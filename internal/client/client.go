@@ -16,11 +16,11 @@ import (
 )
 
 type Client struct {
-	baseURL    string
-	clientID   string
+	baseURL      string
+	clientID     string
 	clientSecret string
-	token      string
-	http       *http.Client
+	token        string
+	http         *http.Client
 }
 
 func New(cfg *config.Config) *Client {
@@ -100,9 +100,9 @@ func (c *Client) doRequest(method, path string, body any) ([]byte, error) {
 
 // RunSummary represents a single run entry returned by the list runs endpoint.
 type RunSummary struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID        string  `json:"id"`
+	Status    string  `json:"status"`
+	CreatedAt string  `json:"createdAt"`
 	EndedAt   *string `json:"endedAt"`
 	Action    struct {
 		Identifier string `json:"identifier"`
@@ -167,7 +167,7 @@ type ActionRun struct {
 
 // EntityLink represents a link to an entity from a run.
 type EntityLink struct {
-	Blueprint string `json:"blueprint"`
+	Blueprint  string `json:"blueprint"`
 	Identifier string `json:"identifier"`
 }
 
@@ -176,6 +176,26 @@ func (ar *ActionRun) GetLinkedEntities() []EntityLink {
 	var links []EntityLink
 	_ = json.Unmarshal(ar.Run.Link, &links)
 	return links
+}
+
+// ResolvedLink pairs a run's entity link with the entity it points at, or with
+// the error from fetching it.
+type ResolvedLink struct {
+	Link   EntityLink
+	Entity *Entity
+	Err    error
+}
+
+// ResolveLinks fetches every entity a run links to. Failures ride along per
+// link rather than aborting, so one unreadable link does not hide the others.
+func (c *Client) ResolveLinks(run *ActionRun) []ResolvedLink {
+	links := run.GetLinkedEntities()
+	out := make([]ResolvedLink, 0, len(links))
+	for _, link := range links {
+		entity, err := c.GetEntity(link.Blueprint, link.Identifier)
+		out = append(out, ResolvedLink{Link: link, Entity: entity, Err: err})
+	}
+	return out
 }
 
 // RunLog represents a log entry from an action run.

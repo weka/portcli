@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
-	"strings"
 	"text/tabwriter"
 
+	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/portfmt"
 )
 
 var (
@@ -64,7 +63,7 @@ func getAction(cmd *cobra.Command, args []string) error {
 				actionGetEnum, action.Identifier)
 		}
 		for _, v := range values {
-			fmt.Println(anyToString(v))
+			fmt.Println(portfmt.AnyToString(v))
 		}
 		return nil
 	}
@@ -90,49 +89,16 @@ func getAction(cmd *cobra.Command, args []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "INPUT\tTYPE\tREQUIRED\tDEFAULT\tENUM")
-	for _, name := range inputOrder(inputs.Order, inputs.Properties) {
+	for _, name := range portfmt.InputOrder(inputs.Order, inputs.Properties) {
 		p := inputs.Properties[name]
 		req := ""
 		if required[name] {
 			req = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, p.Type, req, anyToString(p.Default), enumColumn(p))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, p.Type, req, portfmt.AnyToString(p.Default), enumColumn(p))
 	}
 	w.Flush()
 	return nil
-}
-
-// inputOrder returns input names in the action's declared order, appending any
-// not listed in order (sorted) so nothing is dropped.
-func inputOrder(order []string, props map[string]client.ActionInput) []string {
-	seen := make(map[string]bool, len(props))
-	names := make([]string, 0, len(props))
-	for _, name := range order {
-		if _, ok := props[name]; ok && !seen[name] {
-			names = append(names, name)
-			seen[name] = true
-		}
-	}
-	rest := make([]string, 0, len(props))
-	for name := range props {
-		if !seen[name] {
-			rest = append(rest, name)
-		}
-	}
-	sort.Strings(rest)
-	return append(names, rest...)
-}
-
-// anyToString renders a JSON value as a plain string (strings as-is, others as JSON).
-func anyToString(v any) string {
-	if v == nil {
-		return ""
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	out, _ := json.Marshal(v)
-	return string(out)
 }
 
 // enumColumn renders the ENUM cell for one input. A jq-driven enum has no
@@ -143,21 +109,5 @@ func enumColumn(p client.ActionInput) string {
 	if dynamic {
 		return "<dynamic>"
 	}
-	return enumPreview(values)
-}
-
-// enumPreview joins enum values for the table, truncating long lists.
-func enumPreview(enum []any) string {
-	if len(enum) == 0 {
-		return ""
-	}
-	vals := make([]string, len(enum))
-	for i, v := range enum {
-		vals[i] = anyToString(v)
-	}
-	const max = 6
-	if len(vals) > max {
-		return fmt.Sprintf("%s,… (+%d more)", strings.Join(vals[:max], ","), len(vals)-max)
-	}
-	return strings.Join(vals, ",")
+	return portfmt.EnumPreview(values)
 }

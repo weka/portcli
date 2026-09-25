@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
 
+	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/bulk"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/portfmt"
 )
 
 var (
@@ -95,7 +95,7 @@ func deleteAllEntities(c *client.Client, blueprint string) error {
 	var err error
 
 	if deleteFilter != "" {
-		field, value, ferr := parseFilter(deleteFilter)
+		field, value, ferr := portfmt.ParseFilter(deleteFilter)
 		if ferr != nil {
 			return ferr
 		}
@@ -126,36 +126,21 @@ func deleteAllEntities(c *client.Client, blueprint string) error {
 
 	fmt.Printf("Deleting %d entities...\n", len(entities))
 
-	var (
-		failed atomic.Int32
-		mu     sync.Mutex
-		sem    = make(chan struct{}, 5)
-		wg     sync.WaitGroup
-	)
-
-	for _, entity := range entities {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			if err := c.DeleteEntity(blueprint, id); err != nil {
-				mu.Lock()
-				fmt.Printf("  FAILED %s: %v\n", id, err)
-				mu.Unlock()
-				failed.Add(1)
-				return
-			}
-			mu.Lock()
-			fmt.Printf("  Deleted %s\n", id)
-			mu.Unlock()
-		}(entity.Identifier)
+	ids := make([]string, len(entities))
+	for i, entity := range entities {
+		ids[i] = entity.Identifier
 	}
 
-	wg.Wait()
+	f := bulk.Apply(ids, bulk.DefaultConcurrency,
+		func(id string) error { return c.DeleteEntity(blueprint, id) },
+		func(id string, err error) {
+			if err != nil {
+				fmt.Printf("  FAILED %s: %v\n", id, err)
+				return
+			}
+			fmt.Printf("  Deleted %s\n", id)
+		})
 
-	f := int(failed.Load())
 	if f > 0 {
 		return fmt.Errorf("%d of %d deletes failed", f, len(entities))
 	}

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/weka/portcli/internal/config"
-	"github.com/weka/portcli/internal/client"
 	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/client"
+	"github.com/weka/portcli/internal/config"
 )
 
 var filterRegex string

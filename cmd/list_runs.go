@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
+	"github.com/weka/portcli/internal/portfmt"
 )
 
 var (
@@ -86,24 +87,16 @@ func listRuns(cmd *cobra.Command, args []string) error {
 	for _, r := range filtered {
 		endedAt := ""
 		if r.EndedAt != nil {
-			endedAt = formatDateTime(*r.EndedAt)
+			endedAt = portfmt.DateTime(*r.EndedAt)
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			r.ID,
 			r.Action.Identifier,
 			r.Status,
-			formatDateTime(r.CreatedAt),
+			portfmt.DateTime(r.CreatedAt),
 			endedAt,
 		)
 	}
 	w.Flush()
 	return nil
-}
-
-// formatDateTime trims an ISO timestamp to date + time (no sub-seconds).
-func formatDateTime(s string) string {
-	if idx := strings.Index(s, "."); idx > 0 {
-		s = s[:idx]
-	}
-	return strings.Replace(s, "T", " ", 1)
 }

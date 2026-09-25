@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
 )
 
 var blueprintGetCmd = &cobra.Command{

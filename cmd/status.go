@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/upsert"
 )
 
 var actionStatusCmd = &cobra.Command{
@@ -33,7 +34,7 @@ func getStatus(cmd *cobra.Command, args []string) error {
 
 	result, err := c.GetActionRun(runID)
 	if err != nil {
-		return explainMissingRun(fmt.Errorf("failed to get run: %w", err))
+		return upsert.ExplainMissingRun(fmt.Errorf("failed to get run: %w", err))
 	}
 
 	fmt.Fprintf(os.Stderr, "Run %s: %s\n", runID, result.Run.Status)

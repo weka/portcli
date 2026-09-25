@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/bulk"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
+	"github.com/weka/portcli/internal/portfmt"
 )
 
 var (
@@ -59,14 +59,6 @@ func init() {
 	entityUpdateCmd.Flags().StringVarP(&updateFilter, "filter", "f", "", "Filter entities by property value (format: field=value), implies --all")
 }
 
-func parseValue(raw string) any {
-	var parsed any
-	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
-		return parsed
-	}
-	return raw
-}
-
 func updateEntity(cmd *cobra.Command, args []string) error {
 	blueprint := args[0]
 
@@ -87,7 +79,7 @@ func updateEntity(cmd *cobra.Command, args []string) error {
 		}
 		key := arg[:idx]
 		val := arg[idx+1:]
-		props[key] = parseValue(val)
+		props[key] = portfmt.ParseValue(val)
 	}
 
 	// Parse --json flag and overlay on top (takes precedence)
@@ -137,7 +129,7 @@ func updateAllEntities(c *client.Client, blueprint string, props map[string]any,
 	var err error
 
 	if filter != "" {
-		field, value, ferr := parseFilter(filter)
+		field, value, ferr := portfmt.ParseFilter(filter)
 		if ferr != nil {
 			return ferr
 		}
@@ -160,36 +152,21 @@ func updateAllEntities(c *client.Client, blueprint string, props map[string]any,
 	}
 	fmt.Printf("Updating %s on %d entities%s...\n", propNames(props), len(entities), filterDesc)
 
-	var (
-		failed atomic.Int32
-		mu     sync.Mutex
-		sem    = make(chan struct{}, 5)
-		wg     sync.WaitGroup
-	)
-
-	for _, entity := range entities {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			if err := c.UpdateEntityProperties(blueprint, id, props); err != nil {
-				mu.Lock()
-				fmt.Printf("  FAILED %s: %v\n", id, err)
-				mu.Unlock()
-				failed.Add(1)
-				return
-			}
-			mu.Lock()
-			fmt.Printf("  Updated %s\n", id)
-			mu.Unlock()
-		}(entity.Identifier)
+	ids := make([]string, len(entities))
+	for i, entity := range entities {
+		ids[i] = entity.Identifier
 	}
 
-	wg.Wait()
+	f := bulk.Apply(ids, bulk.DefaultConcurrency,
+		func(id string) error { return c.UpdateEntityProperties(blueprint, id, props) },
+		func(id string, err error) {
+			if err != nil {
+				fmt.Printf("  FAILED %s: %v\n", id, err)
+				return
+			}
+			fmt.Printf("  Updated %s\n", id)
+		})
 
-	f := int(failed.Load())
 	if f > 0 {
 		return fmt.Errorf("%d of %d updates failed", f, len(entities))
 	}

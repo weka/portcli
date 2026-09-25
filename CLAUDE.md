@@ -6,6 +6,22 @@ CLI tool for Port.io self-service actions. Built in Go with Cobra CLI framework.
 ## Rules
 - On each code change, update CLAUDE.md and README.md if needed
 - Run `/simplify` on each code change
+- Nothing under `internal/` writes to stdout or stderr — errors are returned.
+  The upcoming TUI owns the terminal, and one stray print corrupts the screen.
+- Dependencies run one way: `cmd → {portfmt, upsert, bulk, client, config}`.
+  Nothing under `internal/` may import `cmd`, because `cmd` will import the TUI
+  package. Shared helpers belong in `internal/portfmt` (pure formatting and
+  parsing) or a domain package, never in `package cmd`.
+- Shared packages take what they need as parameters. A cobra flag variable is
+  package-global mutable state in `cmd`, and reading one from `internal/` makes
+  the behaviour depend on which command last parsed flags.
+
+## Verifying a change did not alter CLI behaviour
+`scripts/compare_cli.sh [ref]` builds `ref` (default `HEAD`) in a throwaway git
+worktree and runs both binaries back-to-back over ~20 invocations, diffing
+stdout, stderr and exit code. Running them back-to-back matters: entities and
+action runs change under you, so comparing against output captured earlier
+reports live data drift as a regression.
 
 ## Agentic Flow
 
@@ -50,8 +66,15 @@ portcli/
 └── internal/
     ├── client/
     │   └── client.go              # Port.io HTTP client, OAuth auth, all API calls
-    └── config/
-        └── config.go              # Credential loading (env vars → ~/.portcli/config.json)
+    ├── config/
+    │   └── config.go              # Credential loading (env vars → ~/.portcli/config.json)
+    ├── portfmt/                   # Port values ⇄ display strings, and the CLI
+    │   ├── portfmt.go             #   spellings of those values. Pure, no network.
+    │   └── parse.go
+    ├── upsert/
+    │   └── upsert.go              # UPSERT_ENTITY verification (Port keeps no run record)
+    └── bulk/
+        └── bulk.go                # Bounded-concurrency fan-out over entity ids
 ```
 
 ## Key Dependencies

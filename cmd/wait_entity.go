@@ -7,9 +7,10 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/portfmt"
 )
 
 var (
@@ -81,7 +82,7 @@ func waitEntity(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "   %s/%s not available yet (%v)\n", blueprint, identifier, fetchErr)
 				return false, nil
 			}
-			val = propStr(entity.Entity.Properties, waitProperty)
+			val = portfmt.PropStr(entity.Entity.Properties, waitProperty)
 			fmt.Fprintf(os.Stderr, "   %s/%s %s=[%s]\n", blueprint, identifier, waitProperty, val)
 			if failRE != nil && failRE.MatchString(val) {
 				return false, fmt.Errorf("%s/%s %s=%q matched fail condition /%s/", blueprint, identifier, waitProperty, val, waitFailFor)

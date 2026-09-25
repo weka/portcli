@@ -7,23 +7,15 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/spf13/cobra"
 	"github.com/weka/portcli/internal/client"
 	"github.com/weka/portcli/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/weka/portcli/internal/portfmt"
 )
 
 var getProperty string
 var getFilter string
 var getColumns string
-
-// parseFilter splits a "field=value" filter string into its parts.
-func parseFilter(filter string) (field, value string, err error) {
-	parts := strings.SplitN(filter, "=", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("invalid filter format, expected field=value")
-	}
-	return parts[0], parts[1], nil
-}
 
 var entityGetCmd = &cobra.Command{
 	Use:   "get <blueprint> [entity-identifier]",
@@ -68,7 +60,7 @@ func getEntity(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		var entities []client.EntitySummary
 		if getFilter != "" {
-			field, value, err := parseFilter(getFilter)
+			field, value, err := portfmt.ParseFilter(getFilter)
 			if err != nil {
 				return err
 			}
@@ -107,13 +99,13 @@ func getEntity(cmd *cobra.Command, args []string) error {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		header := "IDENTIFIER"
 		for _, col := range columns {
-			header += "\t" + strings.ToUpper(camelToSnake(col))
+			header += "\t" + strings.ToUpper(portfmt.CamelToSnake(col))
 		}
 		fmt.Fprintln(w, header)
 		for _, e := range entities {
 			row := e.Identifier
 			for _, col := range columns {
-				row += "\t" + entityColStr(e, col)
+				row += "\t" + portfmt.EntityCol(e, col)
 			}
 			fmt.Fprintln(w, row)
 		}
@@ -146,52 +138,3 @@ func getEntity(cmd *cobra.Command, args []string) error {
 	fmt.Println(string(out))
 	return nil
 }
-
-// camelToSnake converts camelCase to SNAKE_CASE-friendly form by inserting underscores.
-func camelToSnake(s string) string {
-	var result []byte
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			result = append(result, '_')
-		}
-		result = append(result, byte(r))
-	}
-	return string(result)
-}
-
-// entityColStr returns a column value from an entity, checking meta fields first.
-func entityColStr(e client.EntitySummary, col string) string {
-	switch strings.ToLower(col) {
-	case "createdat":
-		return formatDate(e.CreatedAt)
-	case "createdby":
-		return e.CreatedBy
-	default:
-		return propStr(e.Properties, col)
-	}
-}
-
-// formatDate trims an ISO timestamp to just the date portion.
-func formatDate(s string) string {
-	if t := strings.Index(s, "T"); t > 0 {
-		return s[:t]
-	}
-	return s
-}
-
-// propStr extracts a string property from an entity's properties map.
-func propStr(props map[string]any, key string) string {
-	if props == nil {
-		return ""
-	}
-	v, ok := props[key]
-	if !ok || v == nil {
-		return ""
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	out, _ := json.Marshal(v)
-	return string(out)
-}
-
